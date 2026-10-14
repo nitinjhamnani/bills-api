@@ -1,0 +1,1 @@
+{"status":true,"response_code":"01","data":[{"param_name":"utility_acc_no2","param_label":"Admission No","regex":"^[0-9]{6}$","error_message":"Please enter a valid admission number","param_id":"1","param_type":"Numeric"}]}

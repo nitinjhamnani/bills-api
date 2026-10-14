@@ -1,0 +1,1 @@
+{"status":true,"response_code":"01","message":"Category successfully fetched","data":{"success":true,"data":[{"operator_category_name":"Electricity","operator_category_id":8,"operator_category_group":"0","status":"1"},{"operator_category_name":"Gas","operator_category_id":2,"operator_category_group":"0","status":"0"}]}}

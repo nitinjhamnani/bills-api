@@ -1,0 +1,1 @@
+ALTER TABLE client ADD COLUMN client_code VARCHAR(6) UNIQUE;

@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      # NOTE: no automated test suite exists yet (see implementation plan section 10 -
+      # Testcontainers-backed integration tests covering multi-tenant Flyway migrations and the
+      # end-to-end bill/wallet/reward flow are a documented follow-up, not yet written). This
+      # step therefore only proves the whole reactor still compiles; add `mvn verify` once tests
+      # land.
+      - name: Build
+        run: mvn -B -q clean package -DskipTests
+
+      - name: Build Docker image
+        run: docker build -t b2bfintech-api:${{ github.sha }} .

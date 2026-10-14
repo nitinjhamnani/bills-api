@@ -1,0 +1,93 @@
+server:
+  # 8080 is already used by another local project on this machine - default to 8081 instead.
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: b2bfintech-api
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/b2bfintech
+    username: ${DB_USERNAME:hemantmish}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 10
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none   # Flyway owns schema; never let Hibernate touch DDL
+    properties:
+      hibernate:
+        format_sql: false
+    show-sql: false
+
+  flyway:
+    enabled: true
+    schemas: platform
+    default-schema: platform
+    create-schemas: true
+    locations: classpath:db/migration/platform
+    baseline-on-migrate: false
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  cors:
+    # The Next.js dev server can run on 3000 or 3001 depending on what else is using 3000 locally
+    # (see the UI's README note); add the deployed frontend's URL here once one exists.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001}
+  jwt:
+    # Local/dev secret only - MUST be overridden via env var before this ever runs anywhere
+    # shared. HS256 needs >= 256 bits (32 chars); this is well over that.
+    secret: ${JWT_SECRET:dev-only-b2bfintech-jwt-signing-secret-change-me-before-any-shared-deploy}
+    access-token-ttl-minutes: 60
+  otp:
+    dummy-code: ${OTP_DUMMY_CODE:123456}
+  auth:
+    # Accepted as a password for every account in this dummy environment so seeded personas
+    # (most of which have no password_hash) can sign in.
+    demo-password: ${AUTH_DEMO_PASSWORD:Password@123}
+  documents:
+    # Local disk for Phase 1-4; swap for GCS/S3 in Phase 5 without changing DocumentService callers.
+    storage-dir: ${DOCUMENTS_STORAGE_DIR:./data/documents}
+  billing:
+    # dummy keeps local behaviour. Set BILLING_PROVIDER=kbill to fetch real bills.
+    provider: ${BILLING_PROVIDER:dummy}
+    worker:
+      # Async bill-settlement worker poll interval (ms) - see BillProcessingWorker.
+      poll-interval-ms: ${BILLING_WORKER_POLL_MS:5000}
+    kbill:
+      base-url: ${KBILL_BASE_URL:https://kbillpay.com/api/kbill/v3/customer/bbps}
+      # No default. Supply KBILL_API_TOKEN in the environment. Never commit the token.
+      api-token: ${KBILL_API_TOKEN:}
+      user-agent: ${KBILL_USER_AGENT:paytrix-b2bfintech/1.0}
+      connect-timeout-ms: ${KBILL_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${KBILL_READ_TIMEOUT_MS:20000}
+      catalog-refresh-ms: ${KBILL_CATALOG_REFRESH_MS:7200000}
+      parameter-cache-ttl-ms: ${KBILL_PARAM_CACHE_TTL_MS:7200000}
+      log-payloads: ${KBILL_LOG_PAYLOADS:false}
+      max-logged-body-chars: ${KBILL_MAX_LOG_BODY:4096}
+      slow-call-threshold-ms: ${KBILL_SLOW_CALL_MS:5000}
+      paths:
+        category: /category
+        location: /location
+        operator-list: /operator-list
+        operator-parameters: /operator-parameters
+        bill-fetch: /bill-fetched
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [trace=%X{traceId:-} tenant=%X{tenant:-} client=%X{clientId:-} bill=%X{billId:-}] %logger{36} - %msg%n"
+  level:
+    com.b2bfintech: DEBUG
+    com.b2bfintech.billing.provider.kbill: INFO
