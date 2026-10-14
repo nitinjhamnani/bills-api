@@ -8,8 +8,6 @@ import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.spi.BillFetchFailedException;
 import com.b2bfintech.common.spi.BillingProvider;
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
-import com.b2bfintech.organisation.entity.Client;
-import com.b2bfintech.organisation.repository.ClientRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -47,19 +45,17 @@ public class BillFetchResolutionService {
     private final BillingProvider billingProvider;
     private final BillActivityLogService activityLogService;
     private final ClientPaymentService clientPaymentService;
-    private final ClientRepository clientRepository;
     private final ObjectMapper objectMapper;
 
     public BillFetchResolutionService(
             BillRepository billRepository, BillPaymentRepository billPaymentRepository, BillingProvider billingProvider,
             BillActivityLogService activityLogService, ClientPaymentService clientPaymentService,
-            ClientRepository clientRepository, ObjectMapper objectMapper) {
+            ObjectMapper objectMapper) {
         this.billRepository = billRepository;
         this.billPaymentRepository = billPaymentRepository;
         this.billingProvider = billingProvider;
         this.activityLogService = activityLogService;
         this.clientPaymentService = clientPaymentService;
-        this.clientRepository = clientRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -92,10 +88,7 @@ public class BillFetchResolutionService {
         }
         String sender = bill.getCustomerName();
         if (sender == null || sender.isBlank()) {
-            sender = clientRepository.findById(bill.getClientId()).map(Client::getClientName).orElse(null);
-        }
-        if (sender == null || sender.isBlank()) {
-            resolveFailure(bill, new BillFetchFailedException("Sender name is required before a bill can be fetched", true));
+            resolveFailure(bill, new BillFetchFailedException("Customer name is required before a bill can be fetched", true));
             return null;
         }
         String billerId = bill.getProviderBillerId() != null ? bill.getProviderBillerId() : bill.getBillerId();
@@ -107,7 +100,6 @@ public class BillFetchResolutionService {
     }
 
     private Bill resolveSuccess(Bill bill, BillingProvider.FetchedBill fetched, String clientRefId) {
-        bill.setCustomerName(fetched.customerName());
         bill.setAmount(fetched.amount());
         bill.setAmountBreakdown(serialize(fetched.breakdown()));
         bill.setBillNumber(fetched.billNumber());

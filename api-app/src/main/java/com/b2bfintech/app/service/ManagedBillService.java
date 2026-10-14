@@ -51,7 +51,7 @@ public class ManagedBillService {
     @Transactional
     public Bill createBill(UUID clientId, String categoryId, String locationId, String billerId, String billerName,
                             String customerBillAccountNumber, Map<String, String> parameters,
-                            String customerMobileNumber, String createdBy) {
+                            String customerName, String customerMobileNumber, String createdBy) {
         categoryEnablementService.assertEnabled(clientId, categoryId);
         locationEnablementService.assertEnabled(locationId);
 
@@ -70,6 +70,7 @@ public class ManagedBillService {
         bill.setBillerName(billerName);
         bill.setCustomerBillAccountNumber(customerBillAccountNumber);
         bill.setFetchParameters(writeParameters(parameters));
+        bill.setCustomerName(customerName);
         bill.setCustomerMobileNumber(customerMobileNumber);
         if (isNew) {
             bill.setPaymentStatus(Bill.PaymentStatus.PROCESSING);

@@ -96,7 +96,8 @@ public class ManagedBillController {
                 .orElseThrow(() -> new BadRequestException("Unknown biller for this category and location"));
         Bill bill = managedBillService.createBill(
                 clientId, request.categoryId(), request.locationId(), biller.billerId(), biller.name(),
-                validated.accountNumber(), validated.parameters(), request.customerMobileNumber(), principal.phoneNumber());
+                validated.accountNumber(), validated.parameters(), request.customerName().trim(),
+                request.customerMobileNumber(), principal.phoneNumber());
         return toDto(bill);
     }
 
@@ -282,6 +283,7 @@ public class ManagedBillController {
             @NotBlank String locationId,
             @NotBlank String billerId,
             @NotNull Map<String, String> parameters,
+            @NotBlank @Pattern(regexp = "[A-Za-z]+", message = "Customer name must contain letters only") String customerName,
             @NotBlank @Pattern(regexp = "\\d{10}") String customerMobileNumber) {
     }
 
