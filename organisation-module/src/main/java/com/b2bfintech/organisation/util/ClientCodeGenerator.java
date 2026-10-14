@@ -6,14 +6,15 @@ import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Generates a candidate 6-character client code: 3 letters drawn at random from the letters that
- * appear in the client's name, followed by 3 random digits (e.g. "Acme Corp" -&gt; "ACM482"). Falls
- * back to a random A-Z letter for any position if the name has no letters at all. This only
- * produces a candidate - callers are responsible for retrying on a uniqueness collision (see
- * {@code ClientService.generateUniqueClientCode}).
+ * Generates a candidate 8-character client code: the prefix {@code PX}, then 3 letters drawn at
+ * random from the letters in the client's name, then 3 random digits (e.g. "Acme Corp" -&gt;
+ * "PXACM482"). Falls back to a random A-Z letter for any position if the name has no letters at
+ * all. This only produces a candidate - callers are responsible for retrying on a uniqueness
+ * collision (see {@code ClientService.generateUniqueClientCode}).
  */
 public final class ClientCodeGenerator {
 
+    private static final String PREFIX = "PX";
     private static final String DIGITS = "0123456789";
     private static final int ALPHA_LENGTH = 3;
     private static final int DIGIT_LENGTH = 3;
@@ -34,7 +35,7 @@ public final class ClientCodeGenerator {
         for (int i = 0; i < DIGIT_LENGTH; i++) {
             code.append(DIGITS.charAt(random.nextInt(DIGITS.length())));
         }
-        return code.toString();
+        return PREFIX + code;
     }
 
     private static List<Character> lettersOf(String clientName) {

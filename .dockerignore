@@ -4,3 +4,6 @@
 *.iml
 data/
 *.log
+.env
+.env.*
+!.env.example

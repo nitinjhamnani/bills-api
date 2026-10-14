@@ -1,13 +1,14 @@
 server:
-  # 8080 is already used by another local project on this machine - default to 8081 instead.
-  port: ${SERVER_PORT:8081}
+  # DigitalOcean App Platform sets PORT. Local runs keep 8081 unless SERVER_PORT is set.
+  port: ${PORT:${SERVER_PORT:8081}}
+  forward-headers-strategy: framework
 
 spring:
   application:
     name: b2bfintech-api
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/b2bfintech
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/b2bfintech}
     username: ${DB_USERNAME:hemantmish}
     password: ${DB_PASSWORD:}
     hikari:
@@ -57,9 +58,19 @@ app:
     # Accepted as a password for every account in this dummy environment so seeded personas
     # (most of which have no password_hash) can sign in.
     demo-password: ${AUTH_DEMO_PASSWORD:Password@123}
+    # Created at startup only when no PLATFORM_ADMIN row exists.
+    platform-admin-phone: ${PLATFORM_ADMIN_PHONE:}
+    platform-admin-name: ${PLATFORM_ADMIN_NAME:Platform Admin}
+    platform-admin-password: ${PLATFORM_ADMIN_PASSWORD:}
   documents:
-    # Local disk for Phase 1-4; swap for GCS/S3 in Phase 5 without changing DocumentService callers.
-    storage-dir: ${DOCUMENTS_STORAGE_DIR:./data/documents}
+    # DigitalOcean Spaces. Credentials come from the environment and are never given a default.
+    # Objects are stored at https://<bucket>.<region>.digitaloceanspaces.com/<prefix>/<client code>/...
+    spaces-endpoint: ${SPACES_ENDPOINT:https://sgp1.digitaloceanspaces.com}
+    spaces-region: ${SPACES_REGION:sgp1}
+    spaces-bucket: ${SPACES_BUCKET:paytrix}
+    spaces-prefix: ${SPACES_PREFIX:client}
+    spaces-access-key: ${SPACES_ACCESS_KEY:}
+    spaces-secret-key: ${SPACES_SECRET_KEY:}
   billing:
     # dummy keeps local behaviour. Set BILLING_PROVIDER=kbill to fetch real bills.
     provider: ${BILLING_PROVIDER:dummy}

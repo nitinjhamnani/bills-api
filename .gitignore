@@ -6,6 +6,11 @@ target/
 .vscode/
 .DS_Store
 .env
+.env.*
+!.env.example
 api-app/data/
 __pycache__/
 *.pyc
+
+# Local schema copies and demo seed scripts. The app applies Flyway from db-migration.
+scripts/

@@ -1,0 +1,10 @@
+# Active when SPRING_PROFILES_ACTIVE=prod. Turns off the shared dev password.
+app:
+  auth:
+    demo-password: ""
+  otp:
+    dummy-code: "unused"
+
+logging:
+  level:
+    com.b2bfintech: INFO

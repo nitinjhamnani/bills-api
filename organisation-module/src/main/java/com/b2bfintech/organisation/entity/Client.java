@@ -31,10 +31,9 @@ public class Client {
     @Column(name = "client_name", nullable = false)
     private String clientName;
 
-    /** 6-character alphanumeric code (3 letters drawn from the client name + 3 random digits),
-     * generated once at onboarding and shown everywhere the client name is - a short, stable
-     * identifier that's easier to key in/read aloud than a UUID. */
-    @Column(name = "client_code", unique = true, length = 6)
+    /** 8-character code: {@code PX} plus 3 letters from the client name and 3 random digits,
+     * generated once at onboarding and shown everywhere the client name is. */
+    @Column(name = "client_code", unique = true, length = 8)
     private String clientCode;
 
     @Column(name = "contact_phone")

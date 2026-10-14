@@ -44,7 +44,7 @@ public class ClientService {
         return clientRepository.save(client);
     }
 
-    /** Generates a 6-character client code (see {@link ClientCodeGenerator}), retrying on the rare
+    /** Generates an 8-character client code (see {@link ClientCodeGenerator}), retrying on the rare
      * random collision until a free one is found. Shared with {@link #create} and the startup
      * backfill for clients onboarded before this field existed. */
     public String generateUniqueClientCode(String clientName) {

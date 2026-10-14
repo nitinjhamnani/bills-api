@@ -19,9 +19,8 @@ import java.util.UUID;
 /**
  * Generic document metadata (KYC, client agreements, offline deposit receipts, ...) - tenant
  * schema table, resolved via the same schema-per-tenant routing as every other tenant entity.
- * The file itself lives on local disk under {@code app.documents.storage-dir} for now; swap
- * {@link DocumentStorageService} for a GCS/S3-backed implementation later without touching this
- * table or any caller.
+ * The file itself lives in DigitalOcean Spaces. {@code storage_path} is the object key,
+ * {@code client/<client code>/<id>-<file name>}.
  */
 @Entity
 @Table(name = "document")

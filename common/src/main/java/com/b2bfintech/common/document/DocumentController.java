@@ -34,7 +34,7 @@ public class DocumentController {
             @RequestParam(required = false) String ownerId,
             @RequestParam MultipartFile file,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        Document document = documentService.upload(ownerType, ownerId, file, principal.phoneNumber());
+        Document document = documentService.upload(ownerType, ownerId, file, principal);
         return DocumentDto.from(document);
     }
 

@@ -53,6 +53,14 @@ public class UserDirectoryRepository {
         ).stream().findFirst();
     }
 
+    public boolean existsByRole(String role) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM platform.user_directory WHERE role = ?",
+                Integer.class, role
+        );
+        return count != null && count > 0;
+    }
+
     public boolean existsByPhoneNumber(String phoneNumber) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM platform.user_directory WHERE phone_number = ?",
