@@ -6,3 +6,6 @@ target/
 .vscode/
 .DS_Store
 .env
+api-app/data/
+__pycache__/
+*.pyc
