@@ -53,13 +53,13 @@ public class DisputeController {
         return disputeService.listForBillPayment(billPaymentId).stream().map(this::toDto).toList();
     }
 
-    @GetMapping("/api/v1/organisation/disputes")
+    @GetMapping("/api/v1/paytrix/disputes")
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','CHECKER','MAKER','VIEWER')")
     public List<DisputeDto> listAll() {
         return disputeService.listAll().stream().map(this::toDto).toList();
     }
 
-    @PostMapping("/api/v1/organisation/disputes/{id}/resolve")
+    @PostMapping("/api/v1/paytrix/disputes/{id}/resolve")
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','CHECKER')")
     public DisputeDto resolve(@PathVariable UUID id, @RequestBody ResolveRequest request,
                                @AuthenticationPrincipal AuthenticatedUser principal) {

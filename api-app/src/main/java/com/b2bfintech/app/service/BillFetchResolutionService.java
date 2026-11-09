@@ -20,6 +20,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * The one place the bill status state machine is implemented - shared by bill creation
@@ -59,6 +61,11 @@ public class BillFetchResolutionService {
         this.objectMapper = objectMapper;
     }
 
+    /** Reads the current due bill and does not save it. Settlement uses this so a check cannot open a new cycle. */
+    public BillingProvider.FetchedBill fetchCurrent(Bill bill) {
+        return billingProvider.fetchBill(commandOrThrow(bill));
+    }
+
     @Transactional
     public Bill fetchAndResolve(Bill bill) {
         try {
@@ -77,26 +84,28 @@ public class BillFetchResolutionService {
     }
 
     private BbpsProvider.BillFetchCommand commandFor(Bill bill) {
-        if (bill.getProviderCode() != null && (bill.getProviderBillerId() == null || bill.getProviderBillerId().isBlank())) {
-            resolveFailure(bill, new BillFetchFailedException("Bill is not linked to a provider biller", false));
+        try {
+            return commandOrThrow(bill);
+        } catch (BillFetchFailedException ex) {
+            resolveFailure(bill, ex);
             return null;
+        }
+    }
+
+    private BbpsProvider.BillFetchCommand commandOrThrow(Bill bill) {
+        if (bill.getProviderCode() != null && (bill.getProviderBillerId() == null || bill.getProviderBillerId().isBlank())) {
+            throw new BillFetchFailedException("Bill is not linked to a provider biller", false);
         }
         String mobile = bill.getCustomerMobileNumber();
         if (mobile == null || mobile.isBlank()) {
-            resolveFailure(bill, new BillFetchFailedException("Customer mobile number is required before a bill can be fetched", true));
-            return null;
-        }
-        String sender = bill.getCustomerName();
-        if (sender == null || sender.isBlank()) {
-            resolveFailure(bill, new BillFetchFailedException("Customer name is required before a bill can be fetched", true));
-            return null;
+            throw new BillFetchFailedException("A mobile number is required before a bill can be fetched", true);
         }
         String billerId = bill.getProviderBillerId() != null ? bill.getProviderBillerId() : bill.getBillerId();
         String categoryId = bill.getProviderCategoryId() != null ? bill.getProviderCategoryId() : bill.getBillServiceCode();
         String clientRefId = "BF-" + bill.getId().toString().substring(0, 8) + "-" + Instant.now().toEpochMilli();
         return new BbpsProvider.BillFetchCommand(
                 billerId, categoryId, bill.getCustomerBillAccountNumber(), readParameters(bill),
-                mobile, sender, clientRefId);
+                mobile, bill.getCustomerName(), clientRefId);
     }
 
     private Bill resolveSuccess(Bill bill, BillingProvider.FetchedBill fetched, String clientRefId) {
@@ -106,6 +115,11 @@ public class BillFetchResolutionService {
         bill.setBillDate(fetched.billDate());
         bill.setDueDate(fetched.dueDate());
         bill.setBillPeriod(fetched.billPeriod());
+        if ((bill.getCustomerName() == null || bill.getCustomerName().isBlank())
+                && fetched.customerName() != null && !fetched.customerName().isBlank()) {
+            bill.setCustomerName(fetched.customerName());
+        }
+        bill.setProviderFetchToken(fetched.providerFetchToken());
         bill.setLastFetchResponseSnapshot(serializeSnapshot(fetched));
         bill.setLastFetchAt(Instant.now());
         bill.setLastFetchFailed(false);
@@ -152,13 +166,15 @@ public class BillFetchResolutionService {
 
     /** Same due date already has an open (org_status NA) payment cycle - refresh it in place
      * instead of opening a duplicate, since a scheduled re-fetch can report the same due bill
-     * more than once before the client acts on it. */
+     * more than once before the client acts on it. A cycle opened before the due date was
+     * stored (the key was the bill id) is the same open cycle and is refreshed too. */
     private BillPayment openOrRefreshPaymentCycle(Bill bill, BillingProvider.FetchedBill fetched) {
         String cycleKey = fetched.dueDate() != null ? fetched.dueDate()
                 : Objects.requireNonNullElse(fetched.billNumber(), bill.getId().toString());
         String idempotencyKey = "billpay-" + bill.getId() + "-" + cycleKey;
 
-        BillPayment payment = billPaymentRepository.findByIdempotencyKey(idempotencyKey).orElseGet(BillPayment::new);
+        BillPayment payment = billPaymentRepository.findByIdempotencyKey(idempotencyKey)
+                .orElseGet(() -> unpaidCycleWithoutDueDate(bill.getId()).orElseGet(BillPayment::new));
         boolean isNew = payment.getId() == null;
 
         payment.setBillId(bill.getId());
@@ -183,6 +199,13 @@ public class BillFetchResolutionService {
                     "Payment cycle opened, due Rs." + fetched.amount(), null);
         }
         return payment;
+    }
+
+    private Optional<BillPayment> unpaidCycleWithoutDueDate(UUID billId) {
+        return billPaymentRepository.findByBillIdOrderByCreatedAtDesc(billId).stream()
+                .filter(payment -> payment.getOrgStatus() == BillPayment.OrgStatus.NA)
+                .filter(payment -> payment.getDueDate() == null || payment.getDueDate().isBlank())
+                .findFirst();
     }
 
     private void maybeAutoPay(Bill bill, BillPayment payment) {

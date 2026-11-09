@@ -10,7 +10,7 @@ import java.util.List;
 
 /** Organisation admin configures maker-checker thresholds per money-moving action type. */
 @RestController
-@RequestMapping("/api/v1/organisation/approval-rules")
+@RequestMapping("/api/v1/paytrix/approval-rules")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class ApprovalRuleController {
 

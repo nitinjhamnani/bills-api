@@ -2,7 +2,6 @@ package com.b2bfintech.platform.service;
 
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import com.b2bfintech.platform.repository.BbpsCategoryRepository;
-import com.b2bfintech.platform.repository.BbpsLocationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -17,7 +16,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.List;
 
 /**
- * Loads categories and locations into platform tables. Runs once the application is up, without
+ * Loads categories into the platform table. Runs once the application is up, without
  * blocking startup, and again every two hours. A provider outage leaves the previous rows in place.
  */
 @Service
@@ -27,17 +26,14 @@ public class BbpsCatalogSyncService {
 
     private final ObjectProvider<BbpsProvider> providers;
     private final BbpsCategoryRepository categoryRepository;
-    private final BbpsLocationRepository locationRepository;
     private final TransactionTemplate transactions;
 
     public BbpsCatalogSyncService(
             ObjectProvider<BbpsProvider> providers,
             BbpsCategoryRepository categoryRepository,
-            BbpsLocationRepository locationRepository,
             PlatformTransactionManager transactionManager) {
         this.providers = providers;
         this.categoryRepository = categoryRepository;
-        this.locationRepository = locationRepository;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
@@ -52,8 +48,8 @@ public class BbpsCatalogSyncService {
         }
     }
 
-    @Scheduled(fixedDelayString = "${app.billing.kbill.catalog-refresh-ms:7200000}",
-            initialDelayString = "${app.billing.kbill.catalog-refresh-ms:7200000}")
+    @Scheduled(fixedDelayString = "${app.billing.catalog-refresh-ms:7200000}",
+            initialDelayString = "${app.billing.catalog-refresh-ms:7200000}")
     public void scheduledRefresh() {
         try {
             log.info("Scheduled BBPS catalog sync {}", sync());
@@ -66,11 +62,10 @@ public class BbpsCatalogSyncService {
         BbpsProvider provider = providers.getIfAvailable();
         if (provider == null) {
             log.info("No BBPS provider configured; catalog sync skipped");
-            return new SyncSummary(true, 0, 0, null);
+            return new SyncSummary(true, 0, null);
         }
         int categories = syncCategories(provider);
-        int locations = syncLocations(provider);
-        return new SyncSummary(false, categories, locations, null);
+        return new SyncSummary(false, categories, null);
     }
 
     public int syncCategories(BbpsProvider provider) {
@@ -88,21 +83,6 @@ public class BbpsCatalogSyncService {
         return fetched.size();
     }
 
-    public int syncLocations(BbpsProvider provider) {
-        List<BbpsProvider.ProviderLocation> fetched = provider.fetchLocations();
-        if (fetched.isEmpty()) {
-            log.warn("Location sync returned no rows; leaving the existing locations in place");
-            return 0;
-        }
-        transactions.executeWithoutResult(status -> {
-            locationRepository.deactivateAll(provider.providerCode());
-            for (BbpsProvider.ProviderLocation location : fetched) {
-                locationRepository.upsert(provider.providerCode(), location);
-            }
-        });
-        return fetched.size();
-    }
-
-    public record SyncSummary(boolean skipped, int categories, int locations, String error) {
+    public record SyncSummary(boolean skipped, int categories, String error) {
     }
 }

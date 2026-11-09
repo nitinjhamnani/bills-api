@@ -6,6 +6,8 @@ import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
+import com.b2bfintech.organisation.entity.Branch;
+import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.app.service.CategoryLabels;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Read-only, tenant-wide view of every client's Managed Bills - lets an organisation user browse
@@ -25,7 +28,7 @@ import java.util.function.Function;
  * itself sees, without any of the create/automation actions (those stay client-owned).
  */
 @RestController
-@RequestMapping("/api/v1/organisation/managed-bills")
+@RequestMapping("/api/v1/paytrix/managed-bills")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class OrganisationManagedBillsController {
 
@@ -34,15 +37,17 @@ public class OrganisationManagedBillsController {
     private final ClientRepository clientRepository;
     private final BillActivityLogService activityLogService;
     private final CategoryLabels categoryLabels;
+    private final BranchRepository branchRepository;
 
     public OrganisationManagedBillsController(
             BillRepository billRepository, BillPaymentRepository billPaymentRepository, ClientRepository clientRepository,
-            BillActivityLogService activityLogService, CategoryLabels categoryLabels) {
+            BillActivityLogService activityLogService, CategoryLabels categoryLabels, BranchRepository branchRepository) {
         this.billRepository = billRepository;
         this.billPaymentRepository = billPaymentRepository;
         this.clientRepository = clientRepository;
         this.activityLogService = activityLogService;
         this.categoryLabels = categoryLabels;
+        this.branchRepository = branchRepository;
     }
 
     /** Every client's managed bills, or just one client's if {@code clientId} is given. */
@@ -54,7 +59,8 @@ public class OrganisationManagedBillsController {
         List<Bill> bills = clientId != null
                 ? billRepository.findByClientIdOrderByCreatedAtDesc(clientId)
                 : billRepository.findAllByOrderByCreatedAtDesc();
-        return bills.stream().map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes)).toList();
+        Function<UUID, String> branches = branchNames();
+        return bills.stream().map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes, branches)).toList();
     }
 
     @GetMapping("/{billId}")
@@ -67,7 +73,7 @@ public class OrganisationManagedBillsController {
         Bill bill = getOrThrow(billId);
         Function<String, String> names = categoryLabels.lookup();
         return billPaymentRepository.findByBillIdOrderByCreatedAtDesc(billId).stream()
-                .map(p -> BillDtos.BillPaymentDto.from(p, bill, names))
+                .map(p -> BillDtos.BillPaymentDto.from(p, bill, names, false, false, null, null, null, branchNames()))
                 .toList();
     }
 
@@ -75,7 +81,7 @@ public class OrganisationManagedBillsController {
     public BillDtos.BillPaymentDto payment(@PathVariable UUID billId, @PathVariable UUID paymentId) {
         Bill bill = getOrThrow(billId);
         BillPayment payment = getOwnedPayment(bill, paymentId);
-        return BillDtos.BillPaymentDto.from(payment, bill, categoryLabels.lookup());
+        return BillDtos.BillPaymentDto.from(payment, bill, categoryLabels.lookup(), false, false, null, null, null, branchNames());
     }
 
     @GetMapping("/{billId}/payments/{paymentId}/activity-log")
@@ -101,6 +107,11 @@ public class OrganisationManagedBillsController {
     private BillDtos.ManagedBillDto toDto(Bill bill) {
         return BillDtos.ManagedBillDto.from(
                 bill, categoryLabels.lookup(),
-                BillDtos.clientNameLookup(clientRepository), BillDtos.clientCodeLookup(clientRepository));
+                BillDtos.clientNameLookup(clientRepository), BillDtos.clientCodeLookup(clientRepository), branchNames());
+    }
+
+    private Function<UUID, String> branchNames() {
+        return branchRepository.findAll().stream()
+                .collect(Collectors.toMap(Branch::getId, Branch::getName, (left, right) -> left))::get;
     }
 }

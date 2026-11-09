@@ -4,11 +4,10 @@ import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPaymentLog;
 import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
-import com.b2bfintech.billing.provider.kbill.KBillBbpsProvider;
-import com.b2bfintech.common.tenant.TenantContext;
+import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
-import com.b2bfintech.organisation.service.LocationEnablementService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -28,50 +27,53 @@ public class ManagedBillService {
 
     private final BillRepository billRepository;
     private final CategoryEnablementService categoryEnablementService;
-    private final LocationEnablementService locationEnablementService;
     private final BillFetchResolutionService fetchResolutionService;
     private final AsyncBillFetch asyncBillFetch;
     private final BillActivityLogService activityLogService;
     private final ObjectMapper objectMapper;
+    private final ClientAccountGuard clientAccountGuard;
+    private final ObjectProvider<BbpsProvider> billProviders;
 
     public ManagedBillService(
             BillRepository billRepository, CategoryEnablementService categoryEnablementService,
-            LocationEnablementService locationEnablementService,
             BillFetchResolutionService fetchResolutionService, AsyncBillFetch asyncBillFetch,
-            BillActivityLogService activityLogService, ObjectMapper objectMapper) {
+            BillActivityLogService activityLogService, ObjectMapper objectMapper,
+            ClientAccountGuard clientAccountGuard, ObjectProvider<BbpsProvider> billProviders) {
         this.billRepository = billRepository;
         this.categoryEnablementService = categoryEnablementService;
-        this.locationEnablementService = locationEnablementService;
         this.fetchResolutionService = fetchResolutionService;
         this.asyncBillFetch = asyncBillFetch;
         this.activityLogService = activityLogService;
         this.objectMapper = objectMapper;
+        this.clientAccountGuard = clientAccountGuard;
+        this.billProviders = billProviders;
     }
 
     @Transactional
-    public Bill createBill(UUID clientId, String categoryId, String locationId, String billerId, String billerName,
-                            String customerBillAccountNumber, Map<String, String> parameters,
-                            String customerName, String customerMobileNumber, String createdBy) {
+    public Bill createBill(UUID clientId, UUID branchId, String categoryId, String billerId, String billerName,
+                            String customerBillAccountNumber, Map<String, String> parameters, String createdBy) {
+        clientAccountGuard.requireActiveCorporate(clientId);
         categoryEnablementService.assertEnabled(clientId, categoryId);
-        locationEnablementService.assertEnabled(locationId);
 
         Bill bill = billRepository
                 .findByClientIdAndBillServiceCodeAndCustomerBillAccountNumber(clientId, categoryId, customerBillAccountNumber)
                 .orElseGet(Bill::new);
         boolean isNew = bill.getId() == null;
+        if (!isNew && bill.getBranchId() != null && !branchId.equals(bill.getBranchId())) {
+            throw new com.b2bfintech.common.exception.BadRequestException("This bill already belongs to another branch");
+        }
 
         bill.setClientId(clientId);
+        bill.setBranchId(branchId);
         bill.setBillServiceCode(categoryId);
-        bill.setProviderCode(KBillBbpsProvider.PROVIDER_CODE);
+        bill.setProviderCode(providerCode());
         bill.setProviderCategoryId(categoryId);
-        bill.setProviderLocationId(locationId);
         bill.setProviderBillerId(billerId);
         bill.setBillerId(billerId);
         bill.setBillerName(billerName);
         bill.setCustomerBillAccountNumber(customerBillAccountNumber);
         bill.setFetchParameters(writeParameters(parameters));
-        bill.setCustomerName(customerName);
-        bill.setCustomerMobileNumber(customerMobileNumber);
+        bill.setCustomerMobileNumber(createdBy);
         if (isNew) {
             bill.setPaymentStatus(Bill.PaymentStatus.PROCESSING);
             bill.setBillStatus(Bill.BillStatus.PROCESSING);
@@ -85,23 +87,28 @@ public class ManagedBillService {
         return bill;
     }
 
+    private String providerCode() {
+        BbpsProvider provider = billProviders.getIfAvailable();
+        return provider == null ? "NONE" : provider.providerCode();
+    }
+
     private void scheduleFetch(UUID clientId, UUID billId) {
-        String tenant = TenantContext.getCurrentTenant();
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    asyncBillFetch.fetch(clientId, billId, tenant);
+                    asyncBillFetch.fetch(clientId, billId);
                 }
             });
         } else {
-            asyncBillFetch.fetch(clientId, billId, tenant);
+            asyncBillFetch.fetch(clientId, billId);
         }
     }
 
     /** Manual "Retry fetch" from the Managed Bills screen - same fetch/resolve path as creation. */
     @Transactional
     public Bill retryFetch(UUID clientId, UUID billId) {
+        clientAccountGuard.requireActiveCorporate(clientId);
         Bill bill = getOwnedBill(clientId, billId);
         return fetchResolutionService.fetchAndResolve(bill);
     }

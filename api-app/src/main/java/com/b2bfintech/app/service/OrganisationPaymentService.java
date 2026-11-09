@@ -44,6 +44,7 @@ public class OrganisationPaymentService {
         if (payment.getOrgStatus() != BillPayment.OrgStatus.PENDING) {
             throw new BadRequestException("Bill payment is not pending pick-up");
         }
+        refuseAssigned(payment);
         payment.setOrgStatus(BillPayment.OrgStatus.IN_PROCESS);
         payment.setOrgPickedUpAt(Instant.now());
         payment.setOrgPickedUpBy(actor);
@@ -63,6 +64,7 @@ public class OrganisationPaymentService {
             UUID id, AuthenticatedUser actor, boolean paid,
             String bbpsTransactionId, String externalTransactionId, String billType, String failureReason) {
         BillPayment payment = getOrThrow(id);
+        refuseAssigned(payment);
         if (payment.getOrgStatus() == BillPayment.OrgStatus.PAID) {
             return payment;
         }
@@ -84,6 +86,7 @@ public class OrganisationPaymentService {
     @Transactional
     public BillPayment markPaid(UUID id, AuthenticatedUser actor, String bbpsTransactionId, String externalTransactionId, String billType) {
         BillPayment payment = getOrThrow(id);
+        refuseAssigned(payment);
         if (payment.getOrgStatus() != BillPayment.OrgStatus.IN_PROCESS) {
             throw new BadRequestException("Bill payment must be picked up before it can be marked paid");
         }
@@ -114,6 +117,7 @@ public class OrganisationPaymentService {
     @Transactional
     public BillPayment markFailed(UUID id, String actor, String reason) {
         BillPayment payment = getOrThrow(id);
+        refuseAssigned(payment);
         if (payment.getOrgStatus() != BillPayment.OrgStatus.IN_PROCESS) {
             throw new BadRequestException("Bill payment must be picked up before it can be marked failed");
         }
@@ -122,6 +126,12 @@ public class OrganisationPaymentService {
         payment = billPaymentRepository.save(payment);
         activityLogService.log(payment.getBillId(), payment.getId(), BillPaymentLog.EventType.ORG_MARK_FAILED, reason, actor);
         return payment;
+    }
+
+    private static void refuseAssigned(BillPayment payment) {
+        if (payment.getAssignedVendorClientId() != null) {
+            throw new BadRequestException("This bill is with a vendor. Verify it and pay the vendor from Settlements.");
+        }
     }
 
     private BillPayment getOrThrow(UUID id) {

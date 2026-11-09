@@ -29,9 +29,9 @@ public class BbpsLookupService {
         this.cacheManager = cacheManager;
     }
 
-    @Cacheable(cacheNames = BILLER_CACHE, key = "#categoryId + ':' + (#locationId == null ? '' : #locationId)")
-    public List<BbpsProvider.ProviderBiller> billers(String categoryId, String locationId) {
-        return List.copyOf(provider().fetchBillers(categoryId, locationId));
+    @Cacheable(cacheNames = BILLER_CACHE, key = "#categoryId")
+    public List<BbpsProvider.ProviderBiller> billers(String categoryId) {
+        return List.copyOf(provider().fetchBillers(categoryId));
     }
 
     @Cacheable(cacheNames = PARAMETER_CACHE, key = "#categoryId + ':' + #billerId")
@@ -39,8 +39,8 @@ public class BbpsLookupService {
         return provider().fetchBillerParameters(categoryId, billerId);
     }
 
-    @Scheduled(fixedDelayString = "${app.billing.kbill.parameter-cache-ttl-ms:7200000}",
-            initialDelayString = "${app.billing.kbill.parameter-cache-ttl-ms:7200000}")
+    @Scheduled(fixedDelayString = "${app.billing.parameter-cache-ttl-ms:7200000}",
+            initialDelayString = "${app.billing.parameter-cache-ttl-ms:7200000}")
     public void evictParameters() {
         clear(BILLER_CACHE);
         clear(PARAMETER_CACHE);

@@ -11,11 +11,13 @@ import java.util.UUID;
 public record UserDirectoryEntry(
         UUID id,
         String phoneNumber,
+        String userCode,
         UUID userId,
         String tenantSchema, // null for platform admins
         String role,
         String displayName,
-        UUID clientId, // set only for CLIENT_ADMIN / CLIENT_OPERATOR
+        UUID clientId, // set only for CLIENT_ADMIN / CLIENT_OPERATOR / BRANCH_USER
+        UUID branchId, // set only for BRANCH_USER
         String status,
         String email, // optional alternate login identifier; null unless set at creation
         String passwordHash, // optional; null unless the user was given a password login

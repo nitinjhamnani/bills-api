@@ -109,6 +109,48 @@ public class BillPayment {
     @Column(name = "bill_pay_failure_reason")
     private String billPayFailureReason;
 
+    @Column(name = "assigned_vendor_client_id")
+    private UUID assignedVendorClientId;
+
+    @Column(name = "commission_rule_id")
+    private UUID commissionRuleId;
+
+    @Column(name = "commission_percent", precision = 6, scale = 3)
+    private BigDecimal commissionPercent;
+
+    @Column(name = "commission_amount", precision = 14, scale = 2)
+    private BigDecimal commissionAmount;
+
+    @Column(name = "assigned_at")
+    private Instant assignedAt;
+
+    /** Set when the assigned vendor says they have paid the biller. Paytrix still marks the final status. */
+    @Column(name = "vendor_marked_paid_at")
+    private Instant vendorMarkedPaidAt;
+
+    @Column(name = "vendor_payment_reference")
+    private String vendorPaymentReference;
+
+    /** Where an assigned bill is in the vendor cycle. Null when Paytrix settles the bill itself. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "vendor_stage", length = 20)
+    private VendorStage vendorStage;
+
+    @Column(name = "bbps_verified_at")
+    private Instant bbpsVerifiedAt;
+
+    @Column(name = "bbps_check_note", length = 500)
+    private String bbpsCheckNote;
+
+    @Column(name = "reimbursed_at")
+    private Instant reimbursedAt;
+
+    @Column(name = "reimbursement_id")
+    private UUID reimbursementId;
+
+    @Column(name = "commission_cycle_id")
+    private UUID commissionCycleId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -128,9 +170,15 @@ public class BillPayment {
     }
 
     /** NA: not yet paid by the client, so nothing for the organisation to do. PENDING: the client
-     * has paid (wallet debited) - now with the organisation to settle with the biller. IN_PROCESS:
-     * an organisation user has picked it up. PAID: the organisation has paid the biller. */
+     * has paid (wallet debited). For an unassigned bill that means Paytrix still has to settle it
+     * with the biller. For an assigned bill it means the vendor still holds it. IN_PROCESS: Paytrix
+     * picked up an unassigned bill, or the vendor has marked an assigned bill paid. PAID: Paytrix
+     * paid the biller, or, when the bill is assigned, reimbursed the vendor the full amount. */
     public enum OrgStatus {
         NA, PENDING, IN_PROCESS, PAID
+    }
+
+    public enum VendorStage {
+        ASSIGNED, IN_PROGRESS, VENDOR_PAID, VERIFIED, REIMBURSED
     }
 }

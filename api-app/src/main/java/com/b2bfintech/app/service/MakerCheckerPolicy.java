@@ -32,12 +32,16 @@ public class MakerCheckerPolicy {
     }
 
     public boolean awaitingChecker(BillPayment payment) {
+        if (payment.getAssignedVendorClientId() != null) {
+            return false;
+        }
         return payment.getOrgStatus() == BillPayment.OrgStatus.IN_PROCESS
                 && requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, payment.getAmount());
     }
 
     public boolean canSettleBill(AuthenticatedUser user, BillPayment payment) {
-        if (user == null || payment.getOrgStatus() != BillPayment.OrgStatus.IN_PROCESS) {
+        if (user == null || payment.getAssignedVendorClientId() != null
+                || payment.getOrgStatus() != BillPayment.OrgStatus.IN_PROCESS) {
             return false;
         }
         if (!MONEY_ROLES.contains(user.role())) {

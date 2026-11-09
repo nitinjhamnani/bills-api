@@ -18,7 +18,7 @@ public class ProviderApiLogRepository implements ProviderCallRecorder {
     @Override
     public void record(ProviderCallRecord record) {
         jdbcTemplate.update("""
-                INSERT INTO platform.provider_api_log
+                INSERT INTO provider_api_log
                     (id, provider, operation, tenant, bill_id, client_ref_id, http_status, response_code,
                      duration_ms, masked_request, truncated_response)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

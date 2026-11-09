@@ -1,6 +1,7 @@
 package com.b2bfintech.app.controller;
 
 import com.b2bfintech.app.service.BillActivityLogService;
+import com.b2bfintech.app.service.BranchService;
 import com.b2bfintech.app.service.ManagedBillService;
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
@@ -13,12 +14,13 @@ import com.b2bfintech.app.service.BbpsLookupService;
 import com.b2bfintech.app.service.CategoryLabels;
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import com.b2bfintech.common.spi.bbps.BillParameterValidator;
+import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.ClientCategoryConfig;
+import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -57,7 +59,7 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/v1/clients/{clientId}/managed-bills")
-@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
+@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
 public class ManagedBillController {
 
     private final ManagedBillService managedBillService;
@@ -67,12 +69,15 @@ public class ManagedBillController {
     private final CategoryLabels categoryLabels;
     private final CategoryEnablementService categoryEnablementService;
     private final BbpsLookupService bbpsLookupService;
+    private final BranchRepository branchRepository;
+    private final BranchService branchService;
 
     public ManagedBillController(
             ManagedBillService managedBillService, com.b2bfintech.billing.repository.BillRepository billRepository,
             com.b2bfintech.billing.repository.BillPaymentRepository billPaymentRepository,
             BillActivityLogService activityLogService, CategoryLabels categoryLabels,
-            CategoryEnablementService categoryEnablementService, BbpsLookupService bbpsLookupService) {
+            CategoryEnablementService categoryEnablementService, BbpsLookupService bbpsLookupService,
+            BranchRepository branchRepository, BranchService branchService) {
         this.managedBillService = managedBillService;
         this.billRepository = billRepository;
         this.billPaymentRepository = billPaymentRepository;
@@ -80,6 +85,8 @@ public class ManagedBillController {
         this.categoryLabels = categoryLabels;
         this.categoryEnablementService = categoryEnablementService;
         this.bbpsLookupService = bbpsLookupService;
+        this.branchRepository = branchRepository;
+        this.branchService = branchService;
     }
 
     @PostMapping
@@ -90,14 +97,14 @@ public class ManagedBillController {
         categoryEnablementService.assertEnabled(clientId, request.categoryId());
         List<BbpsProvider.ProviderBillerParameter> declared = bbpsLookupService.parameters(request.categoryId(), request.billerId());
         BillParameterValidator.ValidatedParameters validated = BillParameterValidator.validate(request.parameters(), declared);
-        BbpsProvider.ProviderBiller biller = bbpsLookupService.billers(request.categoryId(), request.locationId()).stream()
+        BbpsProvider.ProviderBiller biller = bbpsLookupService.billers(request.categoryId()).stream()
                 .filter(candidate -> candidate.billerId().equals(request.billerId()))
                 .findFirst()
-                .orElseThrow(() -> new BadRequestException("Unknown biller for this category and location"));
+                .orElseThrow(() -> new BadRequestException("Unknown biller for this category"));
         Bill bill = managedBillService.createBill(
-                clientId, request.categoryId(), request.locationId(), biller.billerId(), biller.name(),
-                validated.accountNumber(), validated.parameters(), request.customerName().trim(),
-                request.customerMobileNumber(), principal.phoneNumber());
+                clientId, resolveBranch(clientId, principal, request.branchId()),
+                request.categoryId(), biller.billerId(), biller.name(),
+                validated.accountNumber(), validated.parameters(), principal.phoneNumber());
         return toDto(bill);
     }
 
@@ -122,7 +129,7 @@ public class ManagedBillController {
     private static byte[] buildBulkTemplateWorkbook(List<String> categories, List<String> billers) throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             Sheet sheet = workbook.createSheet("Bills");
-            String[] headers = {"Category", "Service Provider", "Consumer ID / Number", "Customer Mobile Number"};
+            String[] headers = {"Category", "Service Provider", "Consumer ID / Number"};
             Font headerFont = workbook.createFont();
             headerFont.setBold(true);
             CellStyle headerStyle = workbook.createCellStyle();
@@ -169,7 +176,6 @@ public class ManagedBillController {
             example.createCell(0).setCellValue(categories.isEmpty() ? "" : categories.get(0));
             example.createCell(1).setCellValue(billers.isEmpty() ? "" : billers.get(0));
             example.createCell(2).setCellValue("100234567");
-            example.createCell(3).setCellValue("9876543210");
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             workbook.write(out);
@@ -189,15 +195,17 @@ public class ManagedBillController {
     public List<BillDtos.ManagedBillDto> list(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         Function<String, String> names = categoryLabels.lookup();
+        Function<UUID, String> branches = branchNames();
         return billRepository.findByClientIdOrderByCreatedAtDesc(clientId).stream()
-                .map(b -> BillDtos.ManagedBillDto.from(b, names)).toList();
+                .filter(bill -> visibleTo(principal, bill))
+                .map(b -> BillDtos.ManagedBillDto.from(b, names, null, null, branches)).toList();
     }
 
     @GetMapping("/{billId}")
     public BillDtos.ManagedBillDto get(@PathVariable UUID clientId, @PathVariable UUID billId,
                                         @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        return toDto(managedBillService.getOwnedBill(clientId, billId));
+        return toDto(ownedBill(clientId, billId, principal));
     }
 
     /** Every fetch/payment cycle ever opened for this managed bill, newest first - the "bill
@@ -206,7 +214,7 @@ public class ManagedBillController {
     public List<BillDtos.BillPaymentDto> payments(@PathVariable UUID clientId, @PathVariable UUID billId,
                                                    @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        Bill bill = managedBillService.getOwnedBill(clientId, billId);
+        Bill bill = ownedBill(clientId, billId, principal);
         Function<String, String> names = categoryLabels.lookup();
         return billPaymentRepository.findByBillIdOrderByCreatedAtDesc(billId).stream()
                 .map(p -> BillDtos.BillPaymentDto.from(p, bill, names))
@@ -217,7 +225,7 @@ public class ManagedBillController {
     public List<BillDtos.ActivityLogDto> activityLog(@PathVariable UUID clientId, @PathVariable UUID billId,
                                                        @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        managedBillService.getOwnedBill(clientId, billId); // 404s if not this client's
+        ownedBill(clientId, billId, principal);
         return activityLogService.listForBill(billId).stream().map(BillDtos.ActivityLogDto::from).toList();
     }
 
@@ -226,9 +234,9 @@ public class ManagedBillController {
     public BillDtos.BillPaymentDto payment(@PathVariable UUID clientId, @PathVariable UUID billId, @PathVariable UUID paymentId,
                                             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        Bill bill = managedBillService.getOwnedBill(clientId, billId);
+        Bill bill = ownedBill(clientId, billId, principal);
         BillPayment payment = getOwnedPayment(bill, paymentId);
-        return BillDtos.BillPaymentDto.from(payment, bill, categoryLabels.lookup());
+        return BillDtos.BillPaymentDto.from(payment, bill, categoryLabels.lookup(), false, false, null, null, null, branchNames());
     }
 
     /** Just this one cycle's activity - as opposed to {@link #activityLog}, which is the whole bill's history. */
@@ -236,8 +244,8 @@ public class ManagedBillController {
     public List<BillDtos.ActivityLogDto> paymentActivityLog(@PathVariable UUID clientId, @PathVariable UUID billId, @PathVariable UUID paymentId,
                                                              @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        Bill bill = managedBillService.getOwnedBill(clientId, billId);
-        getOwnedPayment(bill, paymentId); // 404s if not this bill's
+        Bill bill = ownedBill(clientId, billId, principal);
+        getOwnedPayment(bill, paymentId);
         return activityLogService.listForBillPayment(paymentId).stream().map(BillDtos.ActivityLogDto::from).toList();
     }
 
@@ -254,6 +262,7 @@ public class ManagedBillController {
     public BillDtos.ManagedBillDto retryFetch(@PathVariable UUID clientId, @PathVariable UUID billId,
                                                @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
+        ownedBill(clientId, billId, principal);
         return toDto(managedBillService.retryFetch(clientId, billId));
     }
 
@@ -262,9 +271,9 @@ public class ManagedBillController {
                                                          @RequestBody AutomationRequest request,
                                                          @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        Bill current = managedBillService.getOwnedBill(clientId, billId);
+        Bill current = ownedBill(clientId, billId, principal);
         boolean autoPayEnabled = request.autoPayEnabled();
-        if ("CLIENT_OPERATOR".equals(principal.role())) {
+        if ("CLIENT_OPERATOR".equals(principal.role()) || "BRANCH_USER".equals(principal.role())) {
             if (autoPayEnabled != current.isAutoPayEnabled()) {
                 throw new AccessDeniedException("Client operators cannot change auto-pay");
             }
@@ -275,16 +284,69 @@ public class ManagedBillController {
     }
 
     private BillDtos.ManagedBillDto toDto(Bill bill) {
-        return BillDtos.ManagedBillDto.from(bill, categoryLabels.lookup());
+        return BillDtos.ManagedBillDto.from(bill, categoryLabels.lookup(), null, null, branchNames());
+    }
+
+    private Bill ownedBill(UUID clientId, UUID billId, AuthenticatedUser principal) {
+        Bill bill = managedBillService.getOwnedBill(clientId, billId);
+        if (!visibleTo(principal, bill)) {
+            throw new ResourceNotFoundException("Bill not found");
+        }
+        return bill;
+    }
+
+    private boolean visibleTo(AuthenticatedUser principal, Bill bill) {
+        return branchService.branchUserCanSee(principal, bill.getBranchId());
+    }
+
+    private UUID resolveBranch(UUID clientId, AuthenticatedUser principal, String requested) {
+        if ("BRANCH_USER".equals(principal.role())) {
+            List<UUID> allowed = branchService.branchIdsFor(principal);
+            if (requested != null && !requested.isBlank()) {
+                return ownedBranch(clientId, requested, allowed);
+            }
+            if (allowed.size() == 1) {
+                return ownedBranch(clientId, allowed.get(0).toString(), allowed);
+            }
+            if (allowed.isEmpty()) {
+                throw new BadRequestException("You are not assigned to a branch");
+            }
+            throw new BadRequestException("Choose a branch");
+        }
+        if (requested == null || requested.isBlank()) {
+            throw new BadRequestException("Choose a branch");
+        }
+        return ownedBranch(clientId, requested, null);
+    }
+
+    private UUID ownedBranch(UUID clientId, String requested, List<UUID> allowed) {
+        UUID branchId;
+        try {
+            branchId = UUID.fromString(requested);
+        } catch (IllegalArgumentException ex) {
+            throw new BadRequestException("Choose a branch");
+        }
+        if (allowed != null && !allowed.contains(branchId)) {
+            throw new BadRequestException("You do not have this branch");
+        }
+        Branch branch = branchRepository.findById(branchId)
+                .orElseThrow(() -> new BadRequestException("Choose a branch"));
+        if (!clientId.equals(branch.getClientId())) {
+            throw new BadRequestException("Choose a branch");
+        }
+        return branch.getId();
+    }
+
+    private Function<UUID, String> branchNames() {
+        return branchRepository.findAll().stream()
+                .collect(Collectors.toMap(Branch::getId, Branch::getName, (left, right) -> left))::get;
     }
 
     public record CreateRequest(
+            String branchId,
             @NotBlank String categoryId,
-            @NotBlank String locationId,
             @NotBlank String billerId,
-            @NotNull Map<String, String> parameters,
-            @NotBlank @Pattern(regexp = "[A-Za-z]+", message = "Customer name must contain letters only") String customerName,
-            @NotBlank @Pattern(regexp = "\\d{10}") String customerMobileNumber) {
+            @NotNull Map<String, String> parameters) {
     }
 
     public record AutomationRequest(boolean autoFetchEnabled, boolean autoPayEnabled) {

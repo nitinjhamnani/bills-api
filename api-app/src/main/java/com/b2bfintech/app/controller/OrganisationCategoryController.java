@@ -21,7 +21,7 @@ import java.util.stream.Collectors;
 
 /** Organisation settings: every synced category, disabled until an admin switches it on. */
 @RestController
-@RequestMapping("/api/v1/organisation/categories")
+@RequestMapping("/api/v1/paytrix/categories")
 public class OrganisationCategoryController {
 
     private final BbpsCategoryRepository categoryRepository;

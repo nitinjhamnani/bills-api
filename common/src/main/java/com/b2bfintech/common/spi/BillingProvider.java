@@ -29,7 +29,8 @@ public interface BillingProvider {
             String dueDate,
             String billNumber,
             String billPeriod,
-            List<AmountComponent> breakdown) {
+            List<AmountComponent> breakdown,
+            String providerFetchToken) {
     }
 
     /** One line of a bill's amount break-up (e.g. "Current Charges", "Arrears", "Late Payment Fee", "Tax (GST)"). */

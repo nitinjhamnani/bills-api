@@ -2,6 +2,7 @@ package com.b2bfintech.app.service;
 
 import com.b2bfintech.billing.entity.BillPaymentLog;
 import com.b2bfintech.billing.repository.BillPaymentLogRepository;
+import com.b2bfintech.organisation.repository.AppUserRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -13,19 +14,34 @@ import java.util.UUID;
 public class BillActivityLogService {
 
     private final BillPaymentLogRepository repository;
+    private final AppUserRepository appUserRepository;
 
-    public BillActivityLogService(BillPaymentLogRepository repository) {
+    public BillActivityLogService(BillPaymentLogRepository repository, AppUserRepository appUserRepository) {
         this.repository = repository;
+        this.appUserRepository = appUserRepository;
     }
 
     public void log(UUID billId, UUID billPaymentId, BillPaymentLog.EventType eventType, String description, String actor) {
+        String signature = sign(actor);
+        String text = description;
+        if (text != null && actor != null && signature != null && !actor.equals(signature)) {
+            text = text.replace(actor, signature);
+        }
         BillPaymentLog entry = new BillPaymentLog();
         entry.setBillId(billId);
         entry.setBillPaymentId(billPaymentId);
         entry.setEventType(eventType);
-        entry.setDescription(description);
-        entry.setActor(actor);
+        entry.setDescription(text);
+        entry.setActor(signature);
         repository.save(entry);
+    }
+
+    /** A phone number is stored as that user's code. System labels and codes already issued are kept. */
+    private String sign(String actor) {
+        if (actor == null || actor.isBlank()) {
+            return actor;
+        }
+        return appUserRepository.findByPhoneNumber(actor).map(user -> user.getUserCode()).orElse(actor);
     }
 
     public List<BillPaymentLog> listForBill(UUID billId) {

@@ -6,7 +6,11 @@ import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.entity.AppUser;
+import com.b2bfintech.organisation.entity.ClientOnboarding;
+import com.b2bfintech.organisation.repository.AppUserRepository;
+import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.ClientService;
+import com.b2bfintech.organisation.service.OnboardingService;
 import com.b2bfintech.organisation.service.TenantUserService;
 import com.b2bfintech.wallet.entity.LedgerEntry;
 import com.b2bfintech.wallet.entity.WalletAccount;
@@ -26,13 +30,15 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 /** Organisation admin manages the lifecycle of its clients (implementation plan &sect;4.2/&sect;4.3). */
 @RestController
-@RequestMapping("/api/v1/organisation/clients")
+@RequestMapping("/api/v1/paytrix/clients")
 public class ClientController {
 
     private static final Set<String> ASSIGNABLE_CLIENT_ROLES = Set.of("CLIENT_ADMIN", "CLIENT_OPERATOR");
@@ -42,18 +48,27 @@ public class ClientController {
     private final TenantUserService tenantUserService;
     private final WalletService walletService;
     private final AuditService auditService;
+    private final OnboardingService onboardingService;
+    private final AppUserRepository appUserRepository;
+    private final BranchRepository branchRepository;
 
     public ClientController(
             ClientService clientService,
             TenantUserProvisioningService provisioningService,
             TenantUserService tenantUserService,
             WalletService walletService,
-            AuditService auditService) {
+            AuditService auditService,
+            OnboardingService onboardingService,
+            AppUserRepository appUserRepository,
+            BranchRepository branchRepository) {
         this.clientService = clientService;
         this.provisioningService = provisioningService;
         this.tenantUserService = tenantUserService;
         this.walletService = walletService;
         this.auditService = auditService;
+        this.onboardingService = onboardingService;
+        this.appUserRepository = appUserRepository;
+        this.branchRepository = branchRepository;
     }
 
     @PostMapping
@@ -63,30 +78,53 @@ public class ClientController {
     public ClientDto create(@Valid @RequestBody CreateClientRequest request) {
         // Transactional so a failure provisioning the admin user (duplicate phone/email, etc.)
         // rolls back the client row too, instead of leaving a phantom client with no admin.
-        Client client = clientService.create(request.clientName(), request.phoneNumber(), request.clientType());
+        Client client = clientService.create(
+                request.clientName(), request.phoneNumber(), request.clientType(), request.corporateKind());
+        onboardingService.ensure(client.getId());
         provisioningService.createClientUser(
                 request.phoneNumber(), request.clientName(), "CLIENT_ADMIN", client, request.email(), request.password());
-        creditOpeningBalance(client, request.openingBalance());
-        return ClientDto.from(client);
+        if (client.getClientType() == Client.ClientType.VENDOR) {
+            if (request.openingBalance() != null && request.openingBalance().signum() > 0) {
+                throw new BadRequestException("A vendor does not have a wallet");
+            }
+        } else {
+            creditOpeningBalance(client, request.openingBalance());
+        }
+        return toDto(client);
     }
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
     public List<ClientDto> list() {
-        return clientService.listAll().stream().map(ClientDto::from).toList();
+        Map<UUID, Long> branchCounts = new HashMap<>();
+        for (BranchRepository.BranchCount row : branchRepository.countGroupedByClientId()) {
+            branchCounts.put(row.getClientId(), row.getBranchCount());
+        }
+        return clientService.listAll().stream()
+                .map(client -> toDto(client, branchCounts.getOrDefault(client.getId(), 0L)))
+                .toList();
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
     public ClientDto get(@PathVariable UUID id) {
-        return ClientDto.from(clientService.getById(id));
+        return toDto(clientService.getById(id));
+    }
+
+    @PatchMapping("/{id}/sales-person")
+    @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
+    public ClientDto assignSalesPerson(@PathVariable UUID id, @RequestBody SalesPersonRequest request) {
+        return toDto(clientService.assignSalesPerson(id, parseSalesUserId(request.salesUserId())));
     }
 
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
     public ClientDto setStatus(@PathVariable UUID id, @RequestBody StatusRequest request) {
-        Client client = clientService.setStatus(id, Client.ClientStatus.valueOf(request.status()));
-        return ClientDto.from(client);
+        Client.ClientStatus status = Client.ClientStatus.valueOf(request.status());
+        if (status == Client.ClientStatus.ACTIVE) {
+            onboardingService.assertCanActivate(id);
+        }
+        return toDto(clientService.setStatus(id, status));
     }
 
     /** Adds another staff member (admin or operator) to an already-onboarded client. */
@@ -147,10 +185,11 @@ public class ClientController {
             @NotBlank String role) {
     }
 
-    public record ClientUserDto(String id, String phoneNumber, String fullName, String role, String status) {
+    public record ClientUserDto(String id, String phoneNumber, String userCode, String fullName, String role, String status) {
         static ClientUserDto from(AppUser u) {
             return new ClientUserDto(
-                    u.getId().toString(), u.getPhoneNumber(), u.getFullName(), u.getRole().getName(), u.getStatus().name());
+                    u.getId().toString(), u.getPhoneNumber(), u.getUserCode(), u.getFullName(), u.getRole().getName(),
+                    u.getStatus().name());
         }
     }
 
@@ -164,6 +203,7 @@ public class ClientController {
             @Email String email,
             @NotBlank @Size(min = 6, max = 72) String password,
             @NotNull Client.ClientType clientType,
+            Client.CorporateKind corporateKind,
             @DecimalMin(value = "0.00", inclusive = true) @Digits(integer = 12, fraction = 2) BigDecimal openingBalance) {
     }
 
@@ -183,10 +223,51 @@ public class ClientController {
     public record StatusRequest(@NotBlank String status) {
     }
 
-    public record ClientDto(String id, String clientName, String clientCode, String contactPhone, String clientType, String status, Instant createdAt) {
-        static ClientDto from(Client a) {
+    public record SalesPersonRequest(String salesUserId) {
+    }
+
+    public record ClientDto(
+            String id, String clientName, String clientCode, String contactPhone, String clientType,
+            String corporateKind, String status,
+            Instant createdAt, String kycStatus, String contractStatus, Instant detailsSubmittedAt,
+            String salesUserId, String salesPersonName, long branchCount) {
+        static ClientDto from(Client a, ClientOnboarding onboarding, String salesPersonName, long branchCount) {
             return new ClientDto(a.getId().toString(), a.getClientName(), a.getClientCode(), a.getContactPhone(),
-                    a.getClientType().name(), a.getStatus().name(), a.getCreatedAt());
+                    a.getClientType().name(),
+                    a.getCorporateKind() == null ? null : a.getCorporateKind().name(),
+                    a.getStatus().name(), a.getCreatedAt(),
+                    onboarding.getKycStatus().name(), onboarding.getContractStatus().name(),
+                    onboarding.getDetailsSubmittedAt(),
+                    a.getSalesUserId() == null ? null : a.getSalesUserId().toString(),
+                    salesPersonName, branchCount);
+        }
+    }
+
+    private ClientDto toDto(Client client) {
+        long branchCount = client.getClientType() == Client.ClientType.CORPORATE
+                ? branchRepository.countByClientId(client.getId())
+                : 0L;
+        return toDto(client, branchCount);
+    }
+
+    private ClientDto toDto(Client client, long branchCount) {
+        String salesPersonName = null;
+        if (client.getSalesUserId() != null) {
+            salesPersonName = appUserRepository.findById(client.getSalesUserId())
+                    .map(AppUser::getFullName)
+                    .orElse(null);
+        }
+        return ClientDto.from(client, onboardingService.get(client.getId()), salesPersonName, branchCount);
+    }
+
+    private static UUID parseSalesUserId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw.trim());
+        } catch (IllegalArgumentException ex) {
+            throw new BadRequestException("Choose an active sales person");
         }
     }
 }

@@ -3,6 +3,7 @@ package com.b2bfintech.billing.repository;
 import com.b2bfintech.billing.entity.Bill;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -30,4 +31,12 @@ public interface BillRepository extends JpaRepository<Bill, UUID> {
 
     @Query("select coalesce(sum(b.amount), 0) from Bill b where b.clientId = :clientId")
     BigDecimal sumAmountByClientId(UUID clientId);
+
+    @Query("select b.branchId as branchId, count(b) as billCount from Bill b where b.clientId = :clientId group by b.branchId")
+    List<BranchBillCount> countGroupedByBranch(@Param("clientId") UUID clientId);
+
+    interface BranchBillCount {
+        UUID getBranchId();
+        long getBillCount();
+    }
 }

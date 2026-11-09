@@ -29,18 +29,18 @@ public class BillerRepository {
 
     public List<Biller> findAllActive() {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.biller WHERE active = TRUE ORDER BY category, biller_name", MAPPER);
+                "SELECT * FROM biller WHERE active = TRUE ORDER BY category, biller_name", MAPPER);
     }
 
     public List<Biller> findActiveByCategory(String category) {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.biller WHERE active = TRUE AND category = ? ORDER BY biller_name",
+                "SELECT * FROM biller WHERE active = TRUE AND category = ? ORDER BY biller_name",
                 MAPPER, category);
     }
 
     public Optional<Biller> findByBillerId(String billerId) {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.biller WHERE biller_id = ?", MAPPER, billerId
+                "SELECT * FROM biller WHERE biller_id = ?", MAPPER, billerId
         ).stream().findFirst();
     }
 }

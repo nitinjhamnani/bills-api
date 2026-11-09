@@ -11,7 +11,7 @@ import java.util.UUID;
 
 /** Read-only, organisation-wide reports across every client. */
 @RestController
-@RequestMapping("/api/v1/organisation/reports")
+@RequestMapping("/api/v1/paytrix/reports")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class OrganisationReportsController {
 

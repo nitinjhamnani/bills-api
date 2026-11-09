@@ -2,6 +2,7 @@ package com.b2bfintech.app.controller;
 
 import com.b2bfintech.common.audit.AuditService;
 import com.b2bfintech.common.exception.BadRequestException;
+import com.b2bfintech.app.service.ClientAccountGuard;
 import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.wallet.entity.LedgerEntry;
@@ -25,28 +26,33 @@ import java.util.UUID;
  * organisation admin credit a client's wallet directly (e.g. a goodwill credit or an offline
  * payment collected outside the top-up-request flow) without needing the client to submit a
  * top-up request first. Accepting/rejecting an actual top-up request stays on the existing
- * {@code /api/v1/organisation/wallet-topups} endpoints; per-client balance/ledger stays on the
+ * {@code /api/v1/paytrix/wallet-topups} endpoints; per-client balance/ledger stays on the
  * existing {@code /api/v1/clients/{clientId}/wallet} endpoints, which organisation roles can
  * already call.
  */
 @RestController
-@RequestMapping("/api/v1/organisation/wallets")
+@RequestMapping("/api/v1/paytrix/wallets")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class OrganisationWalletController {
 
     private final ClientRepository clientRepository;
     private final WalletService walletService;
     private final AuditService auditService;
+    private final ClientAccountGuard clientAccountGuard;
 
-    public OrganisationWalletController(ClientRepository clientRepository, WalletService walletService, AuditService auditService) {
+    public OrganisationWalletController(
+            ClientRepository clientRepository, WalletService walletService, AuditService auditService,
+            ClientAccountGuard clientAccountGuard) {
         this.clientRepository = clientRepository;
         this.walletService = walletService;
         this.auditService = auditService;
+        this.clientAccountGuard = clientAccountGuard;
     }
 
     @GetMapping
     public List<ClientWalletDto> list() {
         return clientRepository.findAll().stream()
+                .filter(c -> c.getClientType() == Client.ClientType.CORPORATE)
                 .map(c -> new ClientWalletDto(
                         c.getId().toString(), c.getClientName(), c.getClientCode(),
                         walletService.getBalance(c.getId(), WalletAccount.WalletType.WALLET)))
@@ -60,6 +66,7 @@ public class OrganisationWalletController {
                                      @AuthenticationPrincipal AuthenticatedUser principal) {
         Client client = clientRepository.findById(clientId)
                 .orElseThrow(() -> new BadRequestException("Unknown client"));
+        clientAccountGuard.requireWalletClient(clientId);
         walletService.credit(clientId, WalletAccount.WalletType.WALLET, request.amount(),
                 LedgerEntry.ReferenceType.ADJUSTMENT, null, null,
                 "Manual credit by " + principal.phoneNumber() + ": " + request.note());

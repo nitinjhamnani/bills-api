@@ -10,6 +10,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -27,9 +28,11 @@ import java.util.List;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
+    private final ObjectProvider<UserCodeLookup> userCodeLookup;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService, ObjectProvider<UserCodeLookup> userCodeLookup) {
         this.jwtService = jwtService;
+        this.userCodeLookup = userCodeLookup;
     }
 
     @Override
@@ -44,6 +47,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     String tenantSchema = claims.get(JwtService.CLAIM_TENANT_SCHEMA, String.class);
                     String role = claims.get(JwtService.CLAIM_ROLE, String.class);
                     String clientId = claims.get(JwtService.CLAIM_CLIENT_ID, String.class);
+                    String branchId = claims.get(JwtService.CLAIM_BRANCH_ID, String.class);
+                    String userCode = claims.get(JwtService.CLAIM_USER_CODE, String.class);
+                    if (userCode == null || userCode.isBlank()) {
+                        UserCodeLookup lookup = userCodeLookup.getIfAvailable();
+                        if (lookup != null) {
+                            userCode = lookup.findByUserId(claims.getSubject()).orElse(null);
+                        }
+                    }
 
                     AuthenticatedUser principal = new AuthenticatedUser(
                             claims.getSubject(),
@@ -51,7 +62,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                             (tenantSchema == null || tenantSchema.isBlank()) ? null : tenantSchema,
                             role,
                             claims.get(JwtService.CLAIM_DISPLAY_NAME, String.class),
-                            (clientId == null || clientId.isBlank()) ? null : clientId
+                            (clientId == null || clientId.isBlank()) ? null : clientId,
+                            (userCode == null || userCode.isBlank()) ? null : userCode,
+                            (branchId == null || branchId.isBlank()) ? null : branchId
                     );
 
                     var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));

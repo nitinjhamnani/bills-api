@@ -1,14 +1,13 @@
 package com.b2bfintech.app.controller;
 
 import com.b2bfintech.app.service.BbpsLookupService;
+import com.b2bfintech.app.service.BillerListQuery;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.security.AuthenticatedUser;
 import com.b2bfintech.common.security.ClientScopeGuard;
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
-import com.b2bfintech.organisation.service.LocationEnablementService;
 import com.b2bfintech.platform.repository.BbpsCategoryRepository;
-import com.b2bfintech.platform.repository.BbpsLocationRepository;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,26 +19,22 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.UUID;
 
-/** What a client sees while creating a bill: enabled categories, locations, then live billers and their fields. */
+/** What a client sees while creating a bill: enabled categories, then the operators and fields for the one they pick. */
 @RestController
 @RequestMapping("/api/v1/client/bbps")
-@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
+@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
 public class ClientBbpsController {
 
     private final BbpsCategoryRepository categoryRepository;
-    private final BbpsLocationRepository locationRepository;
     private final CategoryEnablementService enablementService;
-    private final LocationEnablementService locationEnablementService;
     private final BbpsLookupService lookupService;
 
     public ClientBbpsController(
-            BbpsCategoryRepository categoryRepository, BbpsLocationRepository locationRepository,
-            CategoryEnablementService enablementService, LocationEnablementService locationEnablementService,
+            BbpsCategoryRepository categoryRepository,
+            CategoryEnablementService enablementService,
             BbpsLookupService lookupService) {
         this.categoryRepository = categoryRepository;
-        this.locationRepository = locationRepository;
         this.enablementService = enablementService;
-        this.locationEnablementService = locationEnablementService;
         this.lookupService = lookupService;
     }
 
@@ -59,22 +54,16 @@ public class ClientBbpsController {
                 .toList();
     }
 
-    @GetMapping("/locations")
-    public List<LocationDto> locations() {
-        return locationRepository.findAllActive().stream()
-                .filter(location -> locationEnablementService.isEnabled(location.locationId()))
-                .map(location -> new LocationDto(location.locationId(), location.name(), location.abbreviation()))
-                .toList();
-    }
-
     @GetMapping("/billers")
-    public List<BillerDto> billers(@RequestParam String categoryId, @RequestParam String locationId,
-                                   @AuthenticationPrincipal AuthenticatedUser principal) {
+    public BillerListDto billers(@RequestParam String categoryId,
+                                 @RequestParam(required = false) String q,
+                                 @AuthenticationPrincipal AuthenticatedUser principal) {
         enablementService.assertEnabled(requiredClient(principal), categoryId);
-        locationEnablementService.assertEnabled(locationId);
-        return lookupService.billers(categoryId, locationId).stream()
-                .map(biller -> new BillerDto(biller.billerId(), biller.name(), biller.categoryId(), biller.locationId()))
+        List<BillerDto> operators = lookupService.billers(categoryId).stream()
+                .map(biller -> new BillerDto(biller.billerId(), biller.name(), biller.categoryId()))
                 .toList();
+        BillerListQuery.Page<BillerDto> page = BillerListQuery.page(operators, q, BillerDto::name);
+        return new BillerListDto(page.billers(), page.searchRequired());
     }
 
     @GetMapping("/billers/{billerId}/parameters")
@@ -101,10 +90,10 @@ public class ClientBbpsController {
         return clientId;
     }
 
-    public record LocationDto(String locationId, String name, String abbreviation) {
+    public record BillerListDto(List<BillerDto> billers, boolean searchRequired) {
     }
 
-    public record BillerDto(String billerId, String name, String categoryId, String locationId) {
+    public record BillerDto(String billerId, String name, String categoryId) {
     }
 
     public record ParameterDto(String name, String label, String dataType, String validationRegex, String errorMessage) {

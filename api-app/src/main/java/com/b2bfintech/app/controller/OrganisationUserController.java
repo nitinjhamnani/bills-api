@@ -3,6 +3,8 @@ package com.b2bfintech.app.controller;
 import com.b2bfintech.app.service.TenantUserProvisioningService;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.organisation.entity.AppUser;
+import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.organisation.service.TenantUserService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
@@ -23,18 +25,24 @@ import java.util.UUID;
  * profile/permission edits, password reset, and suspend/reactivate.
  */
 @RestController
-@RequestMapping("/api/v1/organisation/users")
+@RequestMapping("/api/v1/paytrix/users")
 @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
 public class OrganisationUserController {
 
-    private static final Set<String> ASSIGNABLE_ROLES = Set.of("ORGANISATION_ADMIN", "MAKER", "CHECKER", "VIEWER");
+    private static final Set<String> ASSIGNABLE_ROLES =
+            Set.of("ORGANISATION_ADMIN", "MAKER", "CHECKER", "VIEWER", "SALES");
 
     private final TenantUserService tenantUserService;
     private final TenantUserProvisioningService provisioningService;
+    private final ClientService clientService;
 
-    public OrganisationUserController(TenantUserService tenantUserService, TenantUserProvisioningService provisioningService) {
+    public OrganisationUserController(
+            TenantUserService tenantUserService,
+            TenantUserProvisioningService provisioningService,
+            ClientService clientService) {
         this.tenantUserService = tenantUserService;
         this.provisioningService = provisioningService;
+        this.clientService = clientService;
     }
 
     @PostMapping
@@ -55,14 +63,28 @@ public class OrganisationUserController {
     }
 
     @GetMapping("/{id}")
-    public UserDto get(@PathVariable UUID id) {
-        return UserDto.from(tenantUserService.getById(id));
+    public UserDetailDto get(@PathVariable UUID id) {
+        AppUser user = tenantUserService.getById(id);
+        List<AssignedCorporate> corporates = List.of();
+        if ("SALES".equals(user.getRole().getName())) {
+            corporates = clientService.listForSalesPerson(id).stream()
+                    .filter(client -> client.getClientType() == Client.ClientType.CORPORATE)
+                    .map(AssignedCorporate::from)
+                    .toList();
+        }
+        return UserDetailDto.from(user, corporates);
     }
 
     /** Full profile edit - name, email, and role/permissions. Phone number (the login identifier) is immutable. */
     @PutMapping("/{id}")
     public UserDto update(@PathVariable UUID id, @Valid @RequestBody UpdateUserRequest request) {
         validateRole(request.role());
+        AppUser existing = tenantUserService.getById(id);
+        if ("SALES".equals(existing.getRole().getName())
+                && !"SALES".equals(request.role())
+                && clientService.hasSalesAssignments(id)) {
+            throw new BadRequestException("This person is still assigned to corporates. Clear those assignments first.");
+        }
         AppUser user = provisioningService.updateUserProfile(id, request.fullName(), request.email(), request.role());
         return UserDto.from(user);
     }
@@ -102,11 +124,28 @@ public class OrganisationUserController {
     public record SetPasswordRequest(@NotBlank @Size(min = 6, max = 72) String password) {
     }
 
-    public record UserDto(String id, String phoneNumber, String fullName, String email, String role, String status) {
+    public record UserDto(String id, String phoneNumber, String userCode, String fullName, String email, String role, String status) {
         static UserDto from(AppUser u) {
             return new UserDto(
-                    u.getId().toString(), u.getPhoneNumber(), u.getFullName(), u.getEmail(), u.getRole().getName(),
-                    u.getStatus().name());
+                    u.getId().toString(), u.getPhoneNumber(), u.getUserCode(), u.getFullName(), u.getEmail(),
+                    u.getRole().getName(), u.getStatus().name());
+        }
+    }
+
+    public record AssignedCorporate(String id, String clientName, String clientCode, String status) {
+        static AssignedCorporate from(Client client) {
+            return new AssignedCorporate(
+                    client.getId().toString(), client.getClientName(), client.getClientCode(), client.getStatus().name());
+        }
+    }
+
+    public record UserDetailDto(
+            String id, String phoneNumber, String userCode, String fullName, String email, String role, String status,
+            List<AssignedCorporate> corporates) {
+        static UserDetailDto from(AppUser user, List<AssignedCorporate> corporates) {
+            return new UserDetailDto(
+                    user.getId().toString(), user.getPhoneNumber(), user.getUserCode(), user.getFullName(), user.getEmail(),
+                    user.getRole().getName(), user.getStatus().name(), corporates);
         }
     }
 }

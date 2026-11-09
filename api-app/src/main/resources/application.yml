@@ -25,10 +25,7 @@ spring:
 
   flyway:
     enabled: true
-    schemas: platform
-    default-schema: platform
-    create-schemas: true
-    locations: classpath:db/migration/platform
+    locations: classpath:db/migration
     baseline-on-migrate: false
 
   servlet:
@@ -58,9 +55,9 @@ app:
     # Accepted as a password for every account in this dummy environment so seeded personas
     # (most of which have no password_hash) can sign in.
     demo-password: ${AUTH_DEMO_PASSWORD:Password@123}
-    # Created at startup only when no PLATFORM_ADMIN row exists.
+    # Created at startup only when no ORGANISATION_ADMIN row exists.
     platform-admin-phone: ${PLATFORM_ADMIN_PHONE:}
-    platform-admin-name: ${PLATFORM_ADMIN_NAME:Platform Admin}
+    platform-admin-name: ${PLATFORM_ADMIN_NAME:Paytrix Admin}
     platform-admin-password: ${PLATFORM_ADMIN_PASSWORD:}
   documents:
     # DigitalOcean Spaces. Credentials come from the environment and are never given a default.
@@ -72,33 +69,24 @@ app:
     spaces-access-key: ${SPACES_ACCESS_KEY:}
     spaces-secret-key: ${SPACES_SECRET_KEY:}
   billing:
-    # dummy keeps local behaviour. Set BILLING_PROVIDER=kbill to fetch real bills.
+    # dummy is the local placeholder. branchx fetches live bills.
     provider: ${BILLING_PROVIDER:dummy}
+    catalog-refresh-ms: ${BILLING_CATALOG_REFRESH_MS:7200000}
+    parameter-cache-ttl-ms: ${BILLING_PARAMETER_CACHE_TTL_MS:7200000}
+    branchx:
+      base-url: ${BRANCHX_BASE_URL:https://10x.api.branchx.in}
+      # No default. Supply BRANCHX_API_TOKEN in the environment. Never commit the token.
+      api-token: ${BRANCHX_API_TOKEN:}
+      connect-timeout-ms: ${BRANCHX_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${BRANCHX_READ_TIMEOUT_MS:25000}
+    auto-fetch:
+      enabled: ${BILLING_AUTO_FETCH_ENABLED:true}
     worker:
       # Async bill-settlement worker poll interval (ms) - see BillProcessingWorker.
       poll-interval-ms: ${BILLING_WORKER_POLL_MS:5000}
-    kbill:
-      base-url: ${KBILL_BASE_URL:https://kbillpay.com/api/kbill/v3/customer/bbps}
-      # No default. Supply KBILL_API_TOKEN in the environment. Never commit the token.
-      api-token: ${KBILL_API_TOKEN:}
-      user-agent: ${KBILL_USER_AGENT:paytrix-b2bfintech/1.0}
-      connect-timeout-ms: ${KBILL_CONNECT_TIMEOUT_MS:5000}
-      read-timeout-ms: ${KBILL_READ_TIMEOUT_MS:20000}
-      catalog-refresh-ms: ${KBILL_CATALOG_REFRESH_MS:7200000}
-      parameter-cache-ttl-ms: ${KBILL_PARAM_CACHE_TTL_MS:7200000}
-      log-payloads: ${KBILL_LOG_PAYLOADS:false}
-      max-logged-body-chars: ${KBILL_MAX_LOG_BODY:4096}
-      slow-call-threshold-ms: ${KBILL_SLOW_CALL_MS:5000}
-      paths:
-        category: /category
-        location: /location
-        operator-list: /operator-list
-        operator-parameters: /operator-parameters
-        bill-fetch: /bill-fetched
 
 logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [trace=%X{traceId:-} tenant=%X{tenant:-} client=%X{clientId:-} bill=%X{billId:-}] %logger{36} - %msg%n"
   level:
     com.b2bfintech: DEBUG
-    com.b2bfintech.billing.provider.kbill: INFO

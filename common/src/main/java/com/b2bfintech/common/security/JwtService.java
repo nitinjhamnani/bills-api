@@ -21,10 +21,12 @@ import java.util.Map;
 public class JwtService {
 
     public static final String CLAIM_PHONE = "phone";
+    public static final String CLAIM_USER_CODE = "userCode";
     public static final String CLAIM_TENANT_SCHEMA = "tenantSchema";
     public static final String CLAIM_ROLE = "role";
     public static final String CLAIM_DISPLAY_NAME = "name";
     public static final String CLAIM_CLIENT_ID = "clientId";
+    public static final String CLAIM_BRANCH_ID = "branchId";
 
     private final SecretKey signingKey;
     private final long accessTokenTtlMinutes;
@@ -43,16 +45,30 @@ public class JwtService {
     }
 
     public String generateAccessToken(String userId, String phoneNumber, String tenantSchema, String role, String displayName, String clientId) {
+        return generateAccessToken(userId, phoneNumber, null, tenantSchema, role, displayName, clientId);
+    }
+
+    public String generateAccessToken(
+            String userId, String phoneNumber, String userCode, String tenantSchema, String role,
+            String displayName, String clientId) {
+        return generateAccessToken(userId, phoneNumber, userCode, tenantSchema, role, displayName, clientId, null);
+    }
+
+    public String generateAccessToken(
+            String userId, String phoneNumber, String userCode, String tenantSchema, String role,
+            String displayName, String clientId, String branchId) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + accessTokenTtlMinutes * 60_000);
         return Jwts.builder()
                 .subject(userId)
                 .claims(Map.of(
                         CLAIM_PHONE, phoneNumber,
+                        CLAIM_USER_CODE, userCode == null ? "" : userCode,
                         CLAIM_TENANT_SCHEMA, tenantSchema == null ? "" : tenantSchema,
                         CLAIM_ROLE, role,
                         CLAIM_DISPLAY_NAME, displayName == null ? "" : displayName,
-                        CLAIM_CLIENT_ID, clientId == null ? "" : clientId
+                        CLAIM_CLIENT_ID, clientId == null ? "" : clientId,
+                        CLAIM_BRANCH_ID, branchId == null ? "" : branchId
                 ))
                 .issuedAt(now)
                 .expiration(expiry)

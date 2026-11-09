@@ -4,6 +4,7 @@ import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -17,10 +18,34 @@ public interface BillPaymentRepository extends JpaRepository<BillPayment, UUID> 
     List<BillPayment> findByClientIdOrderByCreatedAtDesc(UUID clientId);
     List<BillPayment> findByClientIdAndPaymentStatusOrderByCreatedAtDesc(UUID clientId, Bill.PaymentStatus paymentStatus);
     List<BillPayment> findByOrgStatusInOrderByCreatedAtDesc(Collection<BillPayment.OrgStatus> orgStatuses);
+
+    List<BillPayment> findByAssignedVendorClientIdAndOrgStatusInOrderByAssignedAtDesc(
+            UUID assignedVendorClientId, Collection<BillPayment.OrgStatus> orgStatuses);
+    List<BillPayment> findByVendorStageOrderByVendorMarkedPaidAtAsc(BillPayment.VendorStage vendorStage);
+    List<BillPayment> findByReimbursementIdIn(Collection<UUID> reimbursementIds);
+    List<BillPayment> findByVendorStageOrderByBbpsVerifiedAtAsc(BillPayment.VendorStage vendorStage);
+
+    @Query("""
+            select p from BillPayment p
+            where p.assignedVendorClientId = :vendorId
+              and p.vendorStage = :stage
+              and p.commissionCycleId is null
+              and p.reimbursedAt >= :from
+              and p.reimbursedAt < :to
+            order by p.reimbursedAt asc
+            """)
+    List<BillPayment> findForCommissionCycle(
+            @Param("vendorId") UUID vendorId,
+            @Param("stage") BillPayment.VendorStage stage,
+            @Param("from") Instant from,
+            @Param("to") Instant to);
     List<BillPayment> findByClientIdAndOrgStatusInOrderByCreatedAtDesc(UUID clientId, Collection<BillPayment.OrgStatus> orgStatuses);
     Optional<BillPayment> findByIdempotencyKey(String idempotencyKey);
 
     long countByOrgStatus(BillPayment.OrgStatus orgStatus);
+    long countByCommissionRuleIdAndOrgStatus(UUID commissionRuleId, BillPayment.OrgStatus orgStatus);
+    long countByCommissionRuleIdAndAssignedVendorClientIdAndOrgStatus(
+            UUID commissionRuleId, UUID assignedVendorClientId, BillPayment.OrgStatus orgStatus);
     long countByClientIdAndOrgStatus(UUID clientId, BillPayment.OrgStatus orgStatus);
     long countByClientId(UUID clientId);
 

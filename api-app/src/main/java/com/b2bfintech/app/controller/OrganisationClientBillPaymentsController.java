@@ -17,7 +17,7 @@ import java.util.function.Function;
 
 /** One client's full bill payment history (any status) - backs the client detail page's Bills tab. */
 @RestController
-@RequestMapping("/api/v1/organisation/clients/{clientId}/bill-payments")
+@RequestMapping("/api/v1/paytrix/clients/{clientId}/bill-payments")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class OrganisationClientBillPaymentsController {
 

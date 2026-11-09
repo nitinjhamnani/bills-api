@@ -33,7 +33,9 @@ import java.util.concurrent.ThreadLocalRandom;
  */
 @Component
 @ConditionalOnProperty(name = "app.billing.provider", havingValue = "dummy", matchIfMissing = true)
-public class DummyBillingAdapter implements BillingProvider {
+public class DummyBillingAdapter implements BillingProvider, BbpsProvider {
+
+    public static final String PROVIDER_CODE = "DUMMY";
 
     private static final Logger log = LoggerFactory.getLogger(DummyBillingAdapter.class);
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
@@ -42,6 +44,26 @@ public class DummyBillingAdapter implements BillingProvider {
             "Ravi Kumar", "Priya Sharma", "Amit Patel", "Sneha Iyer", "Vikram Singh",
             "Ananya Reddy", "Rahul Gupta", "Divya Nair", "Karan Mehta", "Pooja Joshi",
     };
+
+    @Override
+    public String providerCode() {
+        return PROVIDER_CODE;
+    }
+
+    @Override
+    public List<BbpsProvider.ProviderCategory> fetchCategories() {
+        return List.of();
+    }
+
+    @Override
+    public List<BbpsProvider.ProviderBiller> fetchBillers(String categoryId) {
+        return List.of();
+    }
+
+    @Override
+    public List<BbpsProvider.ProviderBillerParameter> fetchBillerParameters(String categoryId, String billerId) {
+        return List.of();
+    }
 
     @Override
     public FetchedBill fetchBill(BbpsProvider.BillFetchCommand command) {
@@ -64,7 +86,7 @@ public class DummyBillingAdapter implements BillingProvider {
             return new FetchedBill(
                     SAMPLE_NAMES[random.nextInt(SAMPLE_NAMES.length)], customerBillAccountNumber, BigDecimal.ZERO,
                     paidBillDate.format(DATE_FORMAT), paidDueDate.format(DATE_FORMAT),
-                    "BILL" + random.nextLong(100_000_000L, 999_999_999L), today.format(PERIOD_FORMAT), List.of());
+                    "BILL" + random.nextLong(100_000_000L, 999_999_999L), today.format(PERIOD_FORMAT), List.of(), null);
         }
         LocalDate billDate = today.minusDays(random.nextInt(5, 20));
         LocalDate dueDate = today.plusDays(random.nextInt(5, 15));
@@ -80,7 +102,8 @@ public class DummyBillingAdapter implements BillingProvider {
                 dueDate.format(DATE_FORMAT),
                 billNumber,
                 today.format(PERIOD_FORMAT),
-                buildBreakdown(amount, random));
+                buildBreakdown(amount, random),
+                null);
     }
 
     /**

@@ -16,7 +16,7 @@ import java.util.UUID;
 
 /**
  * Stores uploaded files in DigitalOcean Spaces. The object key is
- * {@code <prefix>/<client code>/<id>-<file name>}, for example {@code client/PXACM482/….png}.
+ * {@code <prefix>/<client code>/<id>-<file name>}, for example {@code client/COACM482/….png}.
  */
 @Component
 public class DocumentStorageService {

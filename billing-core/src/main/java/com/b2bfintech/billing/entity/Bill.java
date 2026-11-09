@@ -43,6 +43,10 @@ public class Bill {
     @Column(name = "client_id", nullable = false)
     private UUID clientId;
 
+    /** Every managed bill belongs to one branch of this corporate. */
+    @Column(name = "branch_id", nullable = false)
+    private UUID branchId;
+
     @Column(name = "bill_service_code", nullable = false)
     private String billServiceCode;
 
@@ -66,9 +70,6 @@ public class Bill {
 
     @Column(name = "provider_category_id")
     private String providerCategoryId;
-
-    @Column(name = "provider_location_id")
-    private String providerLocationId;
 
     @Column(name = "provider_biller_id")
     private String providerBillerId;
@@ -104,6 +105,10 @@ public class Bill {
     @Enumerated(EnumType.STRING)
     @Column(name = "bill_status", nullable = false)
     private BillStatus billStatus = BillStatus.PROCESSING;
+
+    /** Opaque token from the last successful fetch. A later payment must send it unchanged. */
+    @Column(name = "provider_fetch_token")
+    private String providerFetchToken;
 
     /** Raw provider fetch response, as text - a full snapshot for audit/debugging. */
     @Column(name = "last_fetch_response_snapshot")

@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 
 /** The organisation's view of every client's support tickets. */
 @RestController
-@RequestMapping("/api/v1/organisation/support-tickets")
+@RequestMapping("/api/v1/paytrix/support-tickets")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class OrganisationSupportTicketController {
 

@@ -10,7 +10,7 @@ import java.util.List;
 
 /** Organisation-to-client convenience fee configuration, optionally per bill service (implementation plan &sect;8.2). */
 @RestController
-@RequestMapping("/api/v1/organisation/fee-config")
+@RequestMapping("/api/v1/paytrix/fee-config")
 @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
 public class FeeConfigController {
 

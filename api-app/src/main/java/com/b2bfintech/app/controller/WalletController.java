@@ -1,5 +1,6 @@
 package com.b2bfintech.app.controller;
 
+import com.b2bfintech.app.service.ClientAccountGuard;
 import com.b2bfintech.app.service.WalletTopupService;
 import com.b2bfintech.common.security.ClientScopeGuard;
 import com.b2bfintech.common.security.AuthenticatedUser;
@@ -34,22 +35,28 @@ public class WalletController {
     private final WalletService walletService;
     private final WalletTopupService walletTopupService;
     private final LedgerEntryRepository ledgerEntryRepository;
+    private final ClientAccountGuard clientAccountGuard;
 
-    public WalletController(WalletService walletService, WalletTopupService walletTopupService, LedgerEntryRepository ledgerEntryRepository) {
+    public WalletController(
+            WalletService walletService, WalletTopupService walletTopupService,
+            LedgerEntryRepository ledgerEntryRepository, ClientAccountGuard clientAccountGuard) {
         this.walletService = walletService;
         this.walletTopupService = walletTopupService;
         this.ledgerEntryRepository = ledgerEntryRepository;
+        this.clientAccountGuard = clientAccountGuard;
     }
 
     @GetMapping
     public BalanceDto balance(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
+        clientAccountGuard.requireWalletClient(clientId);
         return new BalanceDto(walletService.getBalance(clientId, WalletAccount.WalletType.WALLET));
     }
 
     @GetMapping("/ledger")
     public List<LedgerEntryDto> ledger(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
+        clientAccountGuard.requireWalletClient(clientId);
         WalletAccount account = walletService.ensureAccount(clientId, WalletAccount.WalletType.WALLET);
         return ledgerEntryRepository.findByWalletAccountIdOrderByCreatedAtDesc(account.getId()).stream()
                 .map(LedgerEntryDto::from).toList();
@@ -60,6 +67,7 @@ public class WalletController {
     public TopupDto topUp(@PathVariable UUID clientId, @Valid @RequestBody TopupRequest request,
                            @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
+        clientAccountGuard.requireWalletClient(clientId);
         var result = walletTopupService.submitTopupRequest(clientId, request.amount(), request.paymentMode(),
                 request.paymentReference(), request.documentId(), request.idempotencyKey(), principal.phoneNumber());
         return TopupDto.from(result);
@@ -68,6 +76,7 @@ public class WalletController {
     @GetMapping("/topups")
     public List<TopupDto> topups(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
+        clientAccountGuard.requireWalletClient(clientId);
         return walletTopupService.listForClient(clientId).stream().map(TopupDto::from).toList();
     }
 

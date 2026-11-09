@@ -2,7 +2,6 @@ package com.b2bfintech.app.service;
 
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.repository.BillRepository;
-import com.b2bfintech.common.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -10,7 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
-/** Runs a bill fetch off the request thread, on the tenant that created the bill. */
+/** Runs a bill fetch off the request thread. */
 @Service
 public class AsyncBillFetch {
 
@@ -25,23 +24,16 @@ public class AsyncBillFetch {
     }
 
     @Async
-    public void fetch(UUID clientId, UUID billId, String tenantSchema) {
-        if (tenantSchema == null || tenantSchema.isBlank()) {
-            log.error("Skipping async fetch for bill {} because no tenant was set", billId);
-            return;
-        }
+    public void fetch(UUID clientId, UUID billId) {
         try {
-            TenantContext.setCurrentTenant(tenantSchema);
             Bill bill = billRepository.findById(billId).orElse(null);
             if (bill == null || !clientId.equals(bill.getClientId())) {
-                log.error("Skipping async fetch for bill {} because it is not in tenant {}", billId, tenantSchema);
+                log.error("Skipping async fetch for bill {} because it was not found for that client", billId);
                 return;
             }
             fetchResolutionService.fetchAndResolve(bill);
         } catch (RuntimeException ex) {
             log.error("Async bill fetch failed for {}", billId, ex);
-        } finally {
-            TenantContext.clear();
         }
     }
 }

@@ -27,6 +27,6 @@ public class BillerServiceCatalogRepository {
 
     public List<BillerService> findAllActive() {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.biller_service_catalog WHERE active = TRUE ORDER BY service_name", MAPPER);
+                "SELECT * FROM biller_service_catalog WHERE active = TRUE ORDER BY service_name", MAPPER);
     }
 }

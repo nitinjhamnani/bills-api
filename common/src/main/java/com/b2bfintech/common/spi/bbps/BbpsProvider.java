@@ -15,9 +15,7 @@ public interface BbpsProvider {
 
     List<ProviderCategory> fetchCategories();
 
-    List<ProviderLocation> fetchLocations();
-
-    List<ProviderBiller> fetchBillers(String categoryId, String locationId);
+    List<ProviderBiller> fetchBillers(String categoryId);
 
     List<ProviderBillerParameter> fetchBillerParameters(String categoryId, String billerId);
 
@@ -26,10 +24,7 @@ public interface BbpsProvider {
     record ProviderCategory(String categoryId, String name, String group, boolean active) {
     }
 
-    record ProviderLocation(String locationId, String name, String abbreviation) {
-    }
-
-    record ProviderBiller(String billerId, String name, String categoryId, String locationId, boolean active) {
+    record ProviderBiller(String billerId, String name, String categoryId, boolean active) {
     }
 
     /**

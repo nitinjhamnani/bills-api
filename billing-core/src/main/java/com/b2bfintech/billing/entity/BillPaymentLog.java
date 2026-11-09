@@ -44,7 +44,7 @@ public class BillPaymentLog {
     @Column
     private String description;
 
-    /** Phone number of the acting user, or null for a scheduled/system event. */
+    /** User code of the acting user, or null for a scheduled/system event. */
     @Column
     private String actor;
 
@@ -58,6 +58,8 @@ public class BillPaymentLog {
 
     public enum EventType {
         CREATED, FETCH_SUCCESS, FETCH_FAILED_TRANSIENT, FETCH_FAILED_PERMANENT,
-        CLIENT_PAID, ORG_PICKED_UP, ORG_PAID, ORG_MARK_FAILED
+        CLIENT_PAID, ASSIGNED, VENDOR_IN_PROGRESS, VENDOR_MARKED_PAID, VENDOR_REJECTED,
+        BBPS_VERIFIED, BBPS_STILL_DUE, VENDOR_REIMBURSED, COMMISSION_CLOSED,
+        ORG_PICKED_UP, ORG_PAID, ORG_MARK_FAILED
     }
 }

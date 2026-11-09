@@ -7,6 +7,7 @@ import com.b2bfintech.organisation.entity.AppUser;
 import com.b2bfintech.organisation.entity.Role;
 import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.RoleRepository;
+import com.b2bfintech.organisation.util.UserCodeGenerator;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -48,6 +49,7 @@ public class TenantUserService {
 
         AppUser user = new AppUser();
         user.setPhoneNumber(phoneNumber);
+        user.setUserCode(generateUniqueUserCode());
         user.setFullName(fullName);
         user.setEmail(email);
         user.setRole(role);
@@ -89,6 +91,19 @@ public class TenantUserService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         user.setStatus(AppUser.UserStatus.SUSPENDED);
         appUserRepository.save(user);
+    }
+
+    private String generateUniqueUserCode() {
+        String code;
+        int attempts = 0;
+        do {
+            code = UserCodeGenerator.generate();
+            attempts++;
+        } while (appUserRepository.existsByUserCode(code) && attempts < 20);
+        if (appUserRepository.existsByUserCode(code)) {
+            throw new BadRequestException("Could not assign a user code");
+        }
+        return code;
     }
 
     public void reactivate(UUID userId) {

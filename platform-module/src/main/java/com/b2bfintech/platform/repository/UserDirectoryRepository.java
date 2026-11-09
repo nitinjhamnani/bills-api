@@ -9,24 +9,20 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * All SQL here is explicitly schema-qualified ({@code platform.user_directory}) rather than
- * relying on the JDBC connection's current search_path. This deliberately makes platform-schema
- * access immune to search_path changes made elsewhere on a pooled connection (Hibernate's
- * schema-per-tenant routing switches search_path per session - see
- * {@code SchemaMultiTenantConnectionProvider}).
- */
+/** Login directory. The {@code tenantSchema} argument on insert is ignored; every user shares one schema. */
 @Repository
 public class UserDirectoryRepository {
 
     private static final RowMapper<UserDirectoryEntry> MAPPER = (rs, rowNum) -> new UserDirectoryEntry(
             UUID.fromString(rs.getString("id")),
             rs.getString("phone_number"),
+            rs.getString("user_code"),
             UUID.fromString(rs.getString("user_id")),
-            rs.getString("tenant_schema"),
+            null,
             rs.getString("role"),
             rs.getString("display_name"),
             rs.getString("client_id") == null ? null : UUID.fromString(rs.getString("client_id")),
+            rs.getString("branch_id") == null ? null : UUID.fromString(rs.getString("branch_id")),
             rs.getString("status"),
             rs.getString("email"),
             rs.getString("password_hash"),
@@ -39,23 +35,20 @@ public class UserDirectoryRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public List<UserDirectoryEntry> findByTenantSchema(String tenantSchema) {
-        return jdbcTemplate.query(
-                "SELECT * FROM platform.user_directory WHERE tenant_schema = ? ORDER BY created_at ASC",
-                MAPPER, tenantSchema
-        );
+    public List<UserDirectoryEntry> findByRole(String role) {
+        return jdbcTemplate.query("SELECT * FROM user_directory WHERE role = ?", MAPPER, role);
     }
 
     public Optional<UserDirectoryEntry> findByPhoneNumber(String phoneNumber) {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.user_directory WHERE phone_number = ?",
+                "SELECT * FROM user_directory WHERE phone_number = ?",
                 MAPPER, phoneNumber
         ).stream().findFirst();
     }
 
     public boolean existsByRole(String role) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM platform.user_directory WHERE role = ?",
+                "SELECT COUNT(*) FROM user_directory WHERE role = ?",
                 Integer.class, role
         );
         return count != null && count > 0;
@@ -63,7 +56,7 @@ public class UserDirectoryRepository {
 
     public boolean existsByPhoneNumber(String phoneNumber) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM platform.user_directory WHERE phone_number = ?",
+                "SELECT COUNT(*) FROM user_directory WHERE phone_number = ?",
                 Integer.class, phoneNumber
         );
         return count != null && count > 0;
@@ -72,7 +65,7 @@ public class UserDirectoryRepository {
     public boolean existsByEmail(String email) {
         if (email == null || email.isBlank()) return false;
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM platform.user_directory WHERE email = ?",
+                "SELECT COUNT(*) FROM user_directory WHERE email = ?",
                 Integer.class, email
         );
         return count != null && count > 0;
@@ -82,7 +75,7 @@ public class UserDirectoryRepository {
     public boolean existsByEmailExcludingUser(String email, UUID excludeUserId) {
         if (email == null || email.isBlank()) return false;
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM platform.user_directory WHERE email = ? AND user_id <> ?",
+                "SELECT COUNT(*) FROM user_directory WHERE email = ? AND user_id <> ?",
                 Integer.class, email, excludeUserId
         );
         return count != null && count > 0;
@@ -91,32 +84,33 @@ public class UserDirectoryRepository {
     /** Password login (&sect;8.1 extension) resolves by either identifier - phone or email. */
     public Optional<UserDirectoryEntry> findByPhoneNumberOrEmail(String identifier) {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.user_directory WHERE phone_number = ? OR email = ?",
+                "SELECT * FROM user_directory WHERE phone_number = ? OR email = ?",
                 MAPPER, identifier, identifier
         ).stream().findFirst();
     }
 
-    public void insert(UUID userId, String phoneNumber, String tenantSchema, String role, String displayName) {
-        insert(userId, phoneNumber, tenantSchema, role, displayName, null);
+    public void insert(UUID userId, String phoneNumber, String tenantSchema, String role, String displayName, String userCode) {
+        insert(userId, phoneNumber, tenantSchema, role, displayName, null, null, null, userCode);
     }
 
-    public void insert(UUID userId, String phoneNumber, String tenantSchema, String role, String displayName, UUID clientId) {
-        insert(userId, phoneNumber, tenantSchema, role, displayName, clientId, null, null);
+    public void insert(UUID userId, String phoneNumber, String tenantSchema, String role, String displayName,
+                        UUID clientId, String userCode) {
+        insert(userId, phoneNumber, tenantSchema, role, displayName, clientId, null, null, userCode);
     }
 
     /** @param email optional alternate login identifier. @param passwordHash optional BCrypt hash enabling password login. */
     public void insert(UUID userId, String phoneNumber, String tenantSchema, String role, String displayName,
-                        UUID clientId, String email, String passwordHash) {
+                        UUID clientId, String email, String passwordHash, String userCode) {
         jdbcTemplate.update(
-                "INSERT INTO platform.user_directory (phone_number, user_id, tenant_schema, role, display_name, client_id, email, password_hash, status, created_at, updated_at) " +
+                "INSERT INTO user_directory (phone_number, user_id, role, display_name, client_id, email, password_hash, user_code, status, created_at, updated_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', now(), now())",
-                phoneNumber, userId, tenantSchema, role, displayName, clientId, email, passwordHash
+                phoneNumber, userId, role, displayName, clientId, email, passwordHash, userCode
         );
     }
 
     /** Best-effort cleanup used by provisioning rollback if a later step fails. */
     public void deleteByPhoneNumber(String phoneNumber) {
-        jdbcTemplate.update("DELETE FROM platform.user_directory WHERE phone_number = ?", phoneNumber);
+        jdbcTemplate.update("DELETE FROM user_directory WHERE phone_number = ?", phoneNumber);
     }
 
     /**
@@ -126,7 +120,7 @@ public class UserDirectoryRepository {
      */
     public void updateProfile(UUID userId, String displayName, String role, String email) {
         jdbcTemplate.update(
-                "UPDATE platform.user_directory SET display_name = ?, role = ?, email = ?, updated_at = now() WHERE user_id = ?",
+                "UPDATE user_directory SET display_name = ?, role = ?, email = ?, updated_at = now() WHERE user_id = ?",
                 displayName, role, email, userId
         );
     }
@@ -138,15 +132,30 @@ public class UserDirectoryRepository {
      */
     public void updateStatus(UUID userId, String status) {
         jdbcTemplate.update(
-                "UPDATE platform.user_directory SET status = ?, updated_at = now() WHERE user_id = ?",
+                "UPDATE user_directory SET status = ?, updated_at = now() WHERE user_id = ?",
                 status, userId
         );
     }
 
     public void updatePasswordHash(UUID userId, String passwordHash) {
         jdbcTemplate.update(
-                "UPDATE platform.user_directory SET password_hash = ?, updated_at = now() WHERE user_id = ?",
+                "UPDATE user_directory SET password_hash = ?, updated_at = now() WHERE user_id = ?",
                 passwordHash, userId
+        );
+    }
+
+    public boolean hasPassword(UUID userId) {
+        String hash = jdbcTemplate.query(
+                "SELECT password_hash FROM user_directory WHERE user_id = ?",
+                rs -> rs.next() ? rs.getString("password_hash") : null,
+                userId);
+        return hash != null && !hash.isBlank();
+    }
+
+    public void updateBranchId(UUID userId, UUID branchId) {
+        jdbcTemplate.update(
+                "UPDATE user_directory SET branch_id = ?, updated_at = now() WHERE user_id = ?",
+                branchId, userId
         );
     }
 }

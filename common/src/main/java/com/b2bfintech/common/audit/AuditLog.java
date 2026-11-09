@@ -32,7 +32,7 @@ public class AuditLog {
     private UUID id;
 
     @Column(name = "actor_user_id")
-    private String actorUserId; // phone number - simplest stable human-readable actor id
+    private String actorUserId; // the acting user's code, or SYSTEM
 
     @Column(name = "actor_role")
     private String actorRole;

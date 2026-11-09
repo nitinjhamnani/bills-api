@@ -12,7 +12,7 @@ import java.util.List;
 /**
  * The master list of individual service providers (billers) a client picks from in the
  * "Create bill" flow, optionally narrowed to one category. Platform-wide master data, same as
- * {@code /api/v1/organisation/bill-services/catalog}.
+ * {@code /api/v1/paytrix/bill-services/catalog}.
  */
 @RestController
 public class BillerController {

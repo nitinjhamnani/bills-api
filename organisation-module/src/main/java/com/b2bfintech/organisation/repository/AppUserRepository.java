@@ -10,5 +10,9 @@ import java.util.UUID;
 public interface AppUserRepository extends JpaRepository<AppUser, UUID> {
     Optional<AppUser> findByPhoneNumber(String phoneNumber);
 
+    boolean existsByUserCode(String userCode);
+
     List<AppUser> findByClientId(UUID clientId);
+
+    List<AppUser> findByBranchIdOrderByFullNameAsc(UUID branchId);
 }

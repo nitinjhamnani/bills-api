@@ -10,7 +10,9 @@ public record AuthenticatedUser(
         String tenantSchema,
         String role,
         String displayName,
-        String clientId // set only for CLIENT_ADMIN / CLIENT_OPERATOR
+        String clientId, // set only for CLIENT_ADMIN / CLIENT_OPERATOR / BRANCH_USER
+        String userCode,
+        String branchId // set only for BRANCH_USER
 ) {
     public boolean isPlatformUser() {
         return tenantSchema == null || tenantSchema.isBlank();

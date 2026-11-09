@@ -63,6 +63,10 @@ public class ReportQueryService {
     }
 
     public ReportDtos.WalletStatementDto walletStatement(UUID clientId, Instant from, Instant to) {
+        Client client = clientRepository.findById(clientId).orElse(null);
+        if (client != null && client.getClientType() == Client.ClientType.VENDOR) {
+            throw new com.b2bfintech.common.exception.BadRequestException("A vendor does not have a wallet");
+        }
         WalletAccount account = walletAccountRepository
                 .findByClientIdAndWalletType(clientId, WalletAccount.WalletType.WALLET)
                 .orElse(null);
@@ -147,11 +151,11 @@ public class ReportQueryService {
                     BigDecimal settled = agg == null ? BigDecimal.ZERO : decimal(agg[2]);
                     BigDecimal outstanding = agg == null ? BigDecimal.ZERO : decimal(agg[3]);
                     BigDecimal pending = agg == null ? BigDecimal.ZERO : decimal(agg[4]);
-                    WalletAccount wallet = wallets.get(c.getId());
+                    WalletAccount wallet = c.getClientType() == Client.ClientType.VENDOR ? null : wallets.get(c.getId());
                     return new ReportDtos.ClientPortfolioRowDto(
                             c.getId().toString(), c.getClientName(), c.getClientCode(),
                             c.getClientType().name(), c.getStatus().name(), c.getCreatedAt(),
-                            wallet != null ? wallet.getBalance() : BigDecimal.ZERO,
+                            c.getClientType() == Client.ClientType.VENDOR ? null : (wallet != null ? wallet.getBalance() : BigDecimal.ZERO),
                             bills, settled, outstanding, pending);
                 })
                 .toList();

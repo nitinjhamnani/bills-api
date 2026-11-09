@@ -1,7 +1,7 @@
 package com.b2bfintech.common.spi.bbps;
 
 /**
- * A catalog call (categories, locations, billers, parameters) failed. Bill fetch uses
+ * A catalog call (categories, billers, parameters) failed. Bill fetch uses
  * {@link com.b2bfintech.common.spi.BillFetchFailedException} instead, because that one drives the
  * bill status state machine.
  */

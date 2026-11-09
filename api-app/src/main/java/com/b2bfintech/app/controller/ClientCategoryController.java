@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 
 /** Categories a client may use: only those the organisation has already enabled. */
 @RestController
-@RequestMapping("/api/v1/organisation/clients/{clientId}/categories")
+@RequestMapping("/api/v1/paytrix/clients/{clientId}/categories")
 public class ClientCategoryController {
 
     private final BbpsCategoryRepository categoryRepository;

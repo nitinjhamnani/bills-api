@@ -55,7 +55,7 @@ public class TenantUserProvisioningService {
         String passwordHash = hashOrNull(rawPassword);
         userDirectoryRepository.insert(
                 user.getId(), phoneNumber, TenantContext.getCurrentTenant(), roleName, fullName, null,
-                normalizedEmail, passwordHash);
+                normalizedEmail, passwordHash, user.getUserCode());
         return user;
     }
 
@@ -80,7 +80,7 @@ public class TenantUserProvisioningService {
         String passwordHash = hashOrNull(rawPassword);
         userDirectoryRepository.insert(
                 user.getId(), phoneNumber, TenantContext.getCurrentTenant(), roleName, fullName, client.getId(),
-                normalizedEmail, passwordHash);
+                normalizedEmail, passwordHash, user.getUserCode());
         return user;
     }
 

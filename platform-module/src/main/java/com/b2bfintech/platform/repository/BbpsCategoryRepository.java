@@ -33,36 +33,36 @@ public class BbpsCategoryRepository {
 
     public List<BbpsCategory> findAllActive() {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.bbps_category WHERE active = TRUE ORDER BY name", MAPPER);
+                "SELECT * FROM bbps_category WHERE active = TRUE ORDER BY name", MAPPER);
     }
 
     public Optional<BbpsCategory> findActiveByCategoryId(String categoryId) {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.bbps_category WHERE category_id = ? AND active = TRUE",
+                "SELECT * FROM bbps_category WHERE category_id = ? AND active = TRUE",
                 MAPPER, categoryId).stream().findFirst();
     }
 
     public Optional<BbpsCategory> findActive(String providerCode, String categoryId) {
         return jdbcTemplate.query(
-                "SELECT * FROM platform.bbps_category WHERE provider_code = ? AND category_id = ? AND active = TRUE",
+                "SELECT * FROM bbps_category WHERE provider_code = ? AND category_id = ? AND active = TRUE",
                 MAPPER, providerCode, categoryId).stream().findFirst();
     }
 
     public Map<String, String> namesById() {
         Map<String, String> names = new LinkedHashMap<>();
-        jdbcTemplate.query("SELECT category_id, name FROM platform.bbps_category", rs -> {
+        jdbcTemplate.query("SELECT category_id, name FROM bbps_category", rs -> {
             names.put(rs.getString("category_id"), rs.getString("name"));
         });
         return names;
     }
 
     public void deactivateAll(String providerCode) {
-        jdbcTemplate.update("UPDATE platform.bbps_category SET active = FALSE WHERE provider_code = ?", providerCode);
+        jdbcTemplate.update("UPDATE bbps_category SET active = FALSE WHERE provider_code = ?", providerCode);
     }
 
     public void upsert(String providerCode, BbpsProvider.ProviderCategory category) {
         jdbcTemplate.update("""
-                INSERT INTO platform.bbps_category
+                INSERT INTO bbps_category
                     (id, provider_code, category_id, name, category_group, active, synced_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (provider_code, category_id) DO UPDATE SET

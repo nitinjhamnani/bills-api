@@ -16,7 +16,7 @@ import java.util.List;
 
 /** Read-only audit trail for the current tenant (implementation plan &sect;8.3). */
 @RestController
-@RequestMapping("/api/v1/organisation/audit-log")
+@RequestMapping("/api/v1/paytrix/audit-log")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class AuditLogController {
 

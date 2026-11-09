@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
 /** Organisation review of wallet top-up requests across all clients - always a single accept/reject
  * before the client's wallet is credited (implementation plan &sect;4.2/&sect;6). */
 @RestController
-@RequestMapping("/api/v1/organisation/wallet-topups")
+@RequestMapping("/api/v1/paytrix/wallet-topups")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class OrganisationTopupReviewController {
 

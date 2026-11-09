@@ -37,21 +37,27 @@ public class ClientPaymentService {
     private final FeeConfigService feeConfigService;
     private final WalletService walletService;
     private final BillActivityLogService activityLogService;
+    private final ClientAccountGuard clientAccountGuard;
+    private final CommissionAssignmentService commissionAssignmentService;
 
     public ClientPaymentService(
             BillPaymentRepository billPaymentRepository, BillRepository billRepository,
             CategoryEnablementService categoryEnablementService, FeeConfigService feeConfigService,
-            WalletService walletService, BillActivityLogService activityLogService) {
+            WalletService walletService, BillActivityLogService activityLogService,
+            ClientAccountGuard clientAccountGuard, CommissionAssignmentService commissionAssignmentService) {
         this.billPaymentRepository = billPaymentRepository;
         this.billRepository = billRepository;
         this.categoryEnablementService = categoryEnablementService;
         this.feeConfigService = feeConfigService;
         this.walletService = walletService;
         this.activityLogService = activityLogService;
+        this.clientAccountGuard = clientAccountGuard;
+        this.commissionAssignmentService = commissionAssignmentService;
     }
 
     @Transactional
     public BillPayment payOne(UUID clientId, UUID billPaymentId, String actor) {
+        clientAccountGuard.requireActiveCorporate(clientId);
         BillPayment payment = billPaymentRepository.findById(billPaymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
         if (!payment.getClientId().equals(clientId)) {
@@ -91,6 +97,7 @@ public class ClientPaymentService {
 
         activityLogService.log(bill.getId(), payment.getId(), BillPaymentLog.EventType.CLIENT_PAID,
                 "Paid by " + actor + ", wallet debited Rs." + payment.getAmount(), actor);
+        commissionAssignmentService.assignIfMatched(payment, bill, actor);
         return payment;
     }
 

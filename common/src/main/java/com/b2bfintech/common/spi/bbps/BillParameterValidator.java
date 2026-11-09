@@ -11,7 +11,8 @@ import java.util.regex.PatternSyntaxException;
 /**
  * Checks a customer's submitted fields against the parameter list a biller declared. The account
  * identity is whichever declared name starts with {@code utility_acc_no} (some billers use
- * {@code utility_acc_no2}).
+ * {@code utility_acc_no2}). When the biller names that field itself, the first declared field is
+ * the account number.
  */
 public final class BillParameterValidator {
 
@@ -47,7 +48,7 @@ public final class BillParameterValidator {
             }
         }
         if (accountNumber == null) {
-            throw new BadRequestException("This biller has no account number field, so a bill cannot be fetched");
+            accountNumber = values.get(declared.get(0).name()).trim();
         }
         return new ValidatedParameters(accountNumber, Map.copyOf(values));
     }

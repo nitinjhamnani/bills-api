@@ -1,7 +1,11 @@
 package com.b2bfintech.app.controller;
 
+import com.b2bfintech.app.service.CommissionAssignmentService;
 import com.b2bfintech.app.service.MakerCheckerPolicy;
 import com.b2bfintech.app.service.OrganisationPaymentService;
+import com.b2bfintech.organisation.entity.Branch;
+import com.b2bfintech.organisation.repository.BranchRepository;
+import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
@@ -38,7 +42,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * The organisation's My Payments screen: bill payments the client has already paid for
@@ -47,7 +53,7 @@ import java.util.function.Function;
  * from the old bulk bill upload template).
  */
 @RestController
-@RequestMapping("/api/v1/organisation/my-payments")
+@RequestMapping("/api/v1/paytrix/my-payments")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class OrganisationMyPaymentsController {
 
@@ -57,17 +63,25 @@ public class OrganisationMyPaymentsController {
     private final CategoryLabels categoryLabels;
     private final LedgerEntryRepository ledgerEntryRepository;
     private final MakerCheckerPolicy makerCheckerPolicy;
+    private final ClientService clientService;
+    private final CommissionAssignmentService commissionAssignmentService;
+    private final BranchRepository branchRepository;
 
     public OrganisationMyPaymentsController(
             OrganisationPaymentService organisationPaymentService, BillPaymentRepository billPaymentRepository,
             BillRepository billRepository, CategoryLabels categoryLabels,
-            LedgerEntryRepository ledgerEntryRepository, MakerCheckerPolicy makerCheckerPolicy) {
+            LedgerEntryRepository ledgerEntryRepository, MakerCheckerPolicy makerCheckerPolicy,
+            ClientService clientService, CommissionAssignmentService commissionAssignmentService,
+            BranchRepository branchRepository) {
         this.organisationPaymentService = organisationPaymentService;
         this.billPaymentRepository = billPaymentRepository;
         this.billRepository = billRepository;
         this.categoryLabels = categoryLabels;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.makerCheckerPolicy = makerCheckerPolicy;
+        this.clientService = clientService;
+        this.commissionAssignmentService = commissionAssignmentService;
+        this.branchRepository = branchRepository;
     }
 
     @GetMapping
@@ -75,7 +89,9 @@ public class OrganisationMyPaymentsController {
         Function<String, String> names = categoryLabels.lookup();
         return billPaymentRepository
                 .findByOrgStatusInOrderByCreatedAtDesc(List.of(BillPayment.OrgStatus.PENDING, BillPayment.OrgStatus.IN_PROCESS))
-                .stream().map(p -> toDto(p, names, principal)).toList();
+                .stream()
+                .filter(p -> p.getAssignedVendorClientId() == null)
+                .map(p -> toDto(p, names, principal)).toList();
     }
 
     @GetMapping("/{id}")
@@ -121,8 +137,12 @@ public class OrganisationMyPaymentsController {
     public ResponseEntity<byte[]> exportExcel(@RequestParam List<java.util.UUID> ids,
                                                @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
         Function<String, String> names = categoryLabels.lookup();
-        List<BillDtos.BillPaymentDto> rows = ids.stream()
-                .map(this::getOrThrow).map(p -> toDto(p, names, principal)).toList();
+        List<BillPayment> payments = ids.stream().map(this::getOrThrow).toList();
+        if (payments.stream().anyMatch(payment -> payment.getAssignedVendorClientId() != null)) {
+            throw new com.b2bfintech.common.exception.BadRequestException(
+                    "Assigned bills are handled in Settlements, not My Payments.");
+        }
+        List<BillDtos.BillPaymentDto> rows = payments.stream().map(p -> toDto(p, names, principal)).toList();
         byte[] xlsx = buildExportWorkbook(rows);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"bill-payments.xlsx\"")
@@ -250,10 +270,15 @@ public class OrganisationMyPaymentsController {
 
     private BillDtos.BillPaymentDto toDto(BillPayment payment, Function<String, String> names, AuthenticatedUser principal) {
         Bill bill = billRepository.findById(payment.getBillId()).orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
+        CommissionAssignmentService.CommissionQuote quote = commissionAssignmentService.quote(payment);
         return BillDtos.BillPaymentDto.from(
                 payment, bill, names,
                 makerCheckerPolicy.awaitingChecker(payment),
-                makerCheckerPolicy.canSettleBill(principal, payment));
+                makerCheckerPolicy.canSettleBill(principal, payment),
+                id -> clientService.find(id).map(client -> client.getClientName()).orElse(null),
+                quote.percent(), quote.amount(),
+                branchRepository.findAll().stream()
+                        .collect(Collectors.toMap(Branch::getId, Branch::getName, (left, right) -> left))::get);
     }
 
     public record MarkPaidRequest(String bbpsTransactionId, String externalTransactionId, String billType) {

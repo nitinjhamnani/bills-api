@@ -9,10 +9,12 @@ public record LoginResponseDto(
     public record UserProfileDto(
             String userId,
             String phoneNumber,
+            String userCode,
             String displayName,
             String role,
             String tenantSchema,
-            String clientId
+            String clientId,
+            String branchId
     ) {
     }
 }

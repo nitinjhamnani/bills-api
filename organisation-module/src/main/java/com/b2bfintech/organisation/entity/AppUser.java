@@ -34,6 +34,10 @@ public class AppUser {
     @Column(name = "phone_number", nullable = false, unique = true)
     private String phoneNumber;
 
+    /** Random 6-character code. Activity logs are signed with this, not the phone number. */
+    @Column(name = "user_code", nullable = false, unique = true, length = 6)
+    private String userCode;
+
     @Column(name = "full_name", nullable = false)
     private String fullName;
 
@@ -45,10 +49,17 @@ public class AppUser {
     @JoinColumn(name = "role_id", nullable = false)
     private Role role;
 
-    /** Set only for CLIENT_ADMIN / CLIENT_OPERATOR users - which client they belong to. */
+    /** Set only for CLIENT_ADMIN / CLIENT_OPERATOR / BRANCH_USER - which client they belong to. */
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "client_id")
     private Client client;
+
+    /**
+     * One branch a BRANCH_USER can open, kept so an existing login still carries a branch.
+     * The branches they can actually use are the rows in branch_user, which can be several.
+     */
+    @Column(name = "branch_id")
+    private UUID branchId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

@@ -23,8 +23,12 @@ public class AuditService {
         AuditLog entry = new AuditLog();
         var auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof AuthenticatedUser user) {
-            entry.setActorUserId(user.phoneNumber());
+            String signature = user.userCode() == null || user.userCode().isBlank() ? user.phoneNumber() : user.userCode();
+            entry.setActorUserId(signature);
             entry.setActorRole(user.role());
+            if (details != null && user.phoneNumber() != null && signature != null && !signature.equals(user.phoneNumber())) {
+                details = details.replace(user.phoneNumber(), signature);
+            }
         } else {
             entry.setActorUserId("SYSTEM");
             entry.setActorRole("SYSTEM");
