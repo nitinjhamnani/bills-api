@@ -7,19 +7,18 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
-public interface BranchMembershipRepository extends JpaRepository<BranchMembership, UUID> {
+public interface BranchMembershipRepository extends JpaRepository<BranchMembership, BranchMembership.Key> {
 
-    boolean existsByUserIdAndBranchId(UUID userId, UUID branchId);
+    boolean existsByUserIdAndBranchId(String userId, String branchId);
 
-    Optional<BranchMembership> findByUserIdAndBranchId(UUID userId, UUID branchId);
+    Optional<BranchMembership> findByUserIdAndBranchId(String userId, String branchId);
 
     @Query("SELECT m.branchId FROM BranchMembership m WHERE m.userId = :userId")
-    List<UUID> findBranchIdsByUserId(@Param("userId") UUID userId);
+    List<String> findBranchIdsByUserId(@Param("userId") String userId);
 
     @Query("SELECT m.userId FROM BranchMembership m WHERE m.branchId = :branchId")
-    List<UUID> findUserIdsByBranchId(@Param("branchId") UUID branchId);
+    List<String> findUserIdsByBranchId(@Param("branchId") String branchId);
 
-    long countByBranchId(UUID branchId);
+    long countByBranchId(String branchId);
 }

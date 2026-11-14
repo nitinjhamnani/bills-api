@@ -63,7 +63,7 @@ public class DisputeController {
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','CHECKER')")
     public DisputeDto resolve(@PathVariable UUID id, @RequestBody ResolveRequest request,
                                @AuthenticationPrincipal AuthenticatedUser principal) {
-        return toDto(disputeService.resolve(id, request.valid(), request.notes(), principal.phoneNumber()));
+        return toDto(disputeService.resolve(id, request.valid(), request.notes(), principal.phoneNumber(), principal.userId()));
     }
 
     private DisputeDto toDto(BillDispute d) {

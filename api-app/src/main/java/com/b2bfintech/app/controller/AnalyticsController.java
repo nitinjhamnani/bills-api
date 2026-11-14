@@ -42,11 +42,11 @@ public class AnalyticsController {
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
     public OrganisationAnalyticsDto organisationAnalytics() {
         return new OrganisationAnalyticsDto(
-                clientRepository.count(),
+                clientRepository.findAll().size(),
                 billPaymentRepository.countByOrgStatus(BillPayment.OrgStatus.PENDING),
                 billPaymentRepository.countByOrgStatus(BillPayment.OrgStatus.IN_PROCESS),
                 billPaymentRepository.countByOrgStatus(BillPayment.OrgStatus.PAID),
-                billRepository.countByBillStatus(Bill.BillStatus.FAILED),
+                billRepository.countByFetchStatus(com.b2bfintech.billing.entity.BillFetch.FetchStatus.FAILED),
                 billPaymentRepository.sumAmountByOrgStatus(BillPayment.OrgStatus.PAID));
     }
 
@@ -64,7 +64,7 @@ public class AnalyticsController {
      */
     @GetMapping("/api/v1/clients/{clientId}/analytics")
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
-    public ClientAnalyticsDto clientAnalytics(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+    public ClientAnalyticsDto clientAnalytics(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         Client client = clientRepository.findById(clientId)
                 .orElseThrow(() -> new com.b2bfintech.common.exception.ResourceNotFoundException("Client not found"));
@@ -74,12 +74,12 @@ public class AnalyticsController {
         return new ClientAnalyticsDto(
                 billRepository.countByClientId(clientId),
                 billRepository.sumAmountByClientId(clientId),
-                billRepository.countByClientIdAndPaymentStatus(clientId, Bill.PaymentStatus.PENDING),
-                billRepository.sumAmountByClientIdAndPaymentStatus(clientId, Bill.PaymentStatus.PENDING),
-                billRepository.countByClientIdAndPaymentStatus(clientId, Bill.PaymentStatus.PAID),
-                billRepository.sumAmountByClientIdAndPaymentStatus(clientId, Bill.PaymentStatus.PAID),
-                billRepository.countByClientIdAndBillStatus(clientId, Bill.BillStatus.PAID),
-                billRepository.sumAmountByClientIdAndBillStatus(clientId, Bill.BillStatus.PAID),
+                billRepository.countByClientIdAndFetchPaymentStatus(clientId, com.b2bfintech.billing.entity.BillFetch.PaymentStatus.PENDING),
+                billRepository.sumAmountByClientIdAndFetchPaymentStatus(clientId, com.b2bfintech.billing.entity.BillFetch.PaymentStatus.PENDING),
+                billRepository.countByClientIdAndFetchPaymentStatus(clientId, com.b2bfintech.billing.entity.BillFetch.PaymentStatus.PAID),
+                billRepository.sumAmountByClientIdAndFetchPaymentStatus(clientId, com.b2bfintech.billing.entity.BillFetch.PaymentStatus.PAID),
+                billRepository.countByClientIdAndFetchStatus(clientId, com.b2bfintech.billing.entity.BillFetch.BillStatus.PAID),
+                billRepository.sumAmountByClientIdAndFetchStatus(clientId, com.b2bfintech.billing.entity.BillFetch.BillStatus.PAID),
                 wallet);
     }
 

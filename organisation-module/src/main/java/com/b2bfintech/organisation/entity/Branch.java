@@ -2,19 +2,15 @@ package com.b2bfintech.organisation.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.time.Instant;
-import java.util.UUID;
-
-/** A location inside one corporate. Managed bills belong to a branch. */
+/** A branch of one corporate or one vendor. Managed bills belong to a branch. */
 @Entity
 @Table(name = "branch")
 @Getter
@@ -23,36 +19,41 @@ import java.util.UUID;
 public class Branch {
 
     @Id
-    @GeneratedValue
-    private UUID id;
+    @Column(name = "branch_id", nullable = false, length = 8)
+    private String branchId;
 
-    @Column(name = "client_id", nullable = false)
-    private UUID clientId;
-
-    @Column(nullable = false)
+    @Column(name = "branch_name", nullable = false, length = 150)
     private String name;
 
-    private String address;
-
+    @Column(name = "branch_code", length = 40)
     private String code;
 
-    private String comment;
+    @Column(name = "branch_address", length = 500)
+    private String address;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
+    @Column(name = "branch_state", length = 100)
+    private String state;
 
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
+    @Column(name = "branch_location", length = 150)
+    private String location;
 
-    @PrePersist
-    void onCreate() {
-        Instant now = Instant.now();
-        createdAt = now;
-        updatedAt = now;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "branch_source_type", nullable = false, length = 16)
+    private SourceType sourceType;
+
+    /** Corporate or vendor id. Still the client uuid until that table is redesigned. */
+    @Column(name = "branch_source_id", nullable = false, length = 64)
+    private String sourceId;
+
+    public String getId() {
+        return branchId;
     }
 
-    @PreUpdate
-    void onUpdate() {
-        updatedAt = Instant.now();
+    public boolean ownedBy(String ownerId) {
+        return ownerId != null && ownerId.equals(sourceId);
+    }
+
+    public enum SourceType {
+        CORP, VENDOR
     }
 }

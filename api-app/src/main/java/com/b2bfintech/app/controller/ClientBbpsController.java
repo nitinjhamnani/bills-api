@@ -7,7 +7,9 @@ import com.b2bfintech.common.security.AuthenticatedUser;
 import com.b2bfintech.common.security.ClientScopeGuard;
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
+import com.b2bfintech.platform.model.BbpsCategory;
 import com.b2bfintech.platform.repository.BbpsCategoryRepository;
+import com.b2bfintech.platform.service.CatalogCache;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,22 +28,25 @@ import java.util.UUID;
 public class ClientBbpsController {
 
     private final BbpsCategoryRepository categoryRepository;
+    private final CatalogCache catalogCache;
     private final CategoryEnablementService enablementService;
     private final BbpsLookupService lookupService;
 
     public ClientBbpsController(
             BbpsCategoryRepository categoryRepository,
+            CatalogCache catalogCache,
             CategoryEnablementService enablementService,
             BbpsLookupService lookupService) {
         this.categoryRepository = categoryRepository;
+        this.catalogCache = catalogCache;
         this.enablementService = enablementService;
         this.lookupService = lookupService;
     }
 
     @GetMapping("/categories")
     public List<ClientCategoryController.ClientCategoryDto> categories(@AuthenticationPrincipal AuthenticatedUser principal) {
-        UUID clientId = requiredClient(principal);
-        return categoryRepository.findAllActive().stream()
+        String clientId = requiredClient(principal);
+        return activeCategories().stream()
                 .filter(category -> {
                     try {
                         enablementService.assertEnabled(clientId, category.categoryId());
@@ -81,13 +86,20 @@ public class ClientBbpsController {
                 .toList();
     }
 
-    private static UUID requiredClient(AuthenticatedUser principal) {
+    private List<BbpsCategory> activeCategories() {
+        List<BbpsCategory> categories = catalogCache.categories();
+        if (!categories.isEmpty()) {
+            return categories;
+        }
+        return categoryRepository.findAllActive();
+    }
+
+    private static String requiredClient(AuthenticatedUser principal) {
         if (principal.clientId() == null || principal.clientId().isBlank()) {
             throw new BadRequestException("This action is only available to a client user");
         }
-        UUID clientId = UUID.fromString(principal.clientId());
-        ClientScopeGuard.assertCanAccess(principal, clientId);
-        return clientId;
+        ClientScopeGuard.assertCanAccess(principal, principal.clientId());
+        return principal.clientId();
     }
 
     public record BillerListDto(List<BillerDto> billers, boolean searchRequired) {

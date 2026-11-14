@@ -17,7 +17,7 @@ public class ClientAccountGuard {
         this.clientService = clientService;
     }
 
-    public Client requireActiveCorporate(UUID clientId) {
+    public Client requireActiveCorporate(String clientId) {
         Client client = clientService.getById(clientId);
         if (client.getClientType() != Client.ClientType.CORPORATE) {
             throw new BadRequestException("Only a corporate client can create or pay bills");
@@ -26,21 +26,21 @@ public class ClientAccountGuard {
         return client;
     }
 
-    public Client requireActive(UUID clientId) {
+    public Client requireActive(String clientId) {
         Client client = clientService.getById(clientId);
         requireActive(client);
         return client;
     }
 
     /** Vendors settle bills outside the app. They do not hold a Paytrix wallet. */
-    public void requireWalletClient(UUID clientId) {
+    public void requireWalletClient(String clientId) {
         Client client = clientService.getById(clientId);
         if (client.getClientType() == Client.ClientType.VENDOR) {
             throw new BadRequestException("A vendor does not have a wallet");
         }
     }
 
-    public Client requireActiveVendor(UUID clientId) {
+    public Client requireActiveVendor(String clientId) {
         Client client = clientService.getById(clientId);
         if (client.getClientType() != Client.ClientType.VENDOR) {
             throw new BadRequestException("Only a vendor can do this");

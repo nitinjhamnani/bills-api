@@ -3,7 +3,7 @@ package com.b2bfintech.app.controller;
 import com.b2bfintech.app.service.BranchService;
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
-import com.b2bfintech.billing.repository.BillPaymentRepository;
+import com.b2bfintech.billing.repository.BillFetchRepository;
 import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.ApiException;
 import com.b2bfintech.common.exception.BadRequestException;
@@ -59,25 +59,25 @@ public class BranchController {
 
     private final BranchService branchService;
     private final BillRepository billRepository;
-    private final BillPaymentRepository billPaymentRepository;
+    private final BillFetchRepository billFetchRepository;
 
     public BranchController(
-            BranchService branchService, BillRepository billRepository, BillPaymentRepository billPaymentRepository) {
+            BranchService branchService, BillRepository billRepository, BillFetchRepository billFetchRepository) {
         this.branchService = branchService;
         this.billRepository = billRepository;
-        this.billPaymentRepository = billPaymentRepository;
+        this.billFetchRepository = billFetchRepository;
     }
 
     @GetMapping("/branches")
     @PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
-    public List<BranchDto> list(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+    public List<BranchDto> list(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return branchService.list(clientId).stream().map(this::toDto).toList();
     }
 
     @GetMapping("/branches/{branchId}")
     @PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
-    public BranchDto get(@PathVariable UUID clientId, @PathVariable UUID branchId,
+    public BranchDto get(@PathVariable String clientId, @PathVariable String branchId,
                          @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return toDto(branchService.get(clientId, branchId));
@@ -86,28 +86,28 @@ public class BranchController {
     @PostMapping("/branches")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public BranchDto create(@PathVariable UUID clientId, @Valid @RequestBody BranchRequest request,
+    public BranchDto create(@PathVariable String clientId, @Valid @RequestBody BranchRequest request,
                             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         Branch branch = branchService.create(
-                clientId, request.name(), request.address(), request.code(), request.comment(),
+                clientId, request.name(), request.address(), request.state(), request.location(), request.code(),
                 request.phoneNumber(), request.userName(), request.userIds());
         return toDto(branch);
     }
 
     @GetMapping("/branches/mine")
     @PreAuthorize("hasRole('BRANCH_USER')")
-    public List<BranchDto> mine(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+    public List<BranchDto> mine(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        return branchService.branchesForUser(clientId, UUID.fromString(principal.userId())).stream()
+        return branchService.branchesForUser(clientId, principal.userId()).stream()
                 .map(this::toDto)
                 .toList();
     }
 
     @GetMapping("/branch-user-pool")
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public List<PoolUserDto> pool(@PathVariable UUID clientId,
-                                  @RequestParam(required = false) UUID branchId,
+    public List<PoolUserDto> pool(@PathVariable String clientId,
+                                  @RequestParam(required = false) String branchId,
                                   @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return branchService.pool(clientId, branchId).stream().map(PoolUserDto::from).toList();
@@ -115,7 +115,7 @@ public class BranchController {
 
     @GetMapping("/branches/bulk/template")
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public ResponseEntity<byte[]> bulkTemplate(@PathVariable UUID clientId,
+    public ResponseEntity<byte[]> bulkTemplate(@PathVariable String clientId,
                                                 @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return ResponseEntity.ok()
@@ -126,7 +126,7 @@ public class BranchController {
 
     @PostMapping(value = "/branches/bulk", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public List<BillDtos.BulkRowResult> createBulk(@PathVariable UUID clientId, @RequestParam MultipartFile file,
+    public List<BillDtos.BulkRowResult> createBulk(@PathVariable String clientId, @RequestParam MultipartFile file,
                                                     @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         if (file == null || file.isEmpty()) {
@@ -170,7 +170,7 @@ public class BranchController {
                         throw new BadRequestException("Enter a 10-digit phone number");
                     }
                     Branch created = branchService.create(
-                            clientId, name, address, code, null,
+                            clientId, name, address, null, null, code,
                             withUser ? phone : null, withUser ? userName : null, List.of());
                     results.add(new BillDtos.BulkRowResult(rowNum, true, created.getName(), null));
                 } catch (RuntimeException ex) {
@@ -244,18 +244,19 @@ public class BranchController {
 
     @PatchMapping("/branches/{branchId}")
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public BranchDto update(@PathVariable UUID clientId, @PathVariable UUID branchId,
+    public BranchDto update(@PathVariable String clientId, @PathVariable String branchId,
                             @Valid @RequestBody BranchUpdateRequest request,
                             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        Branch branch = branchService.update(clientId, branchId, request.name(), request.address(), request.code(), request.comment());
+        Branch branch = branchService.update(
+                clientId, branchId, request.name(), request.address(), request.state(), request.location(), request.code());
         return toDto(branch);
     }
 
     @PostMapping("/branches/{branchId}/users")
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public BranchUserDto addUser(@PathVariable UUID clientId, @PathVariable UUID branchId,
+    public BranchUserDto addUser(@PathVariable String clientId, @PathVariable String branchId,
                                  @Valid @RequestBody BranchUserRequest request,
                                  @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
@@ -265,7 +266,7 @@ public class BranchController {
 
     @PostMapping("/branches/{branchId}/users/assign")
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public List<BranchUserDto> assignUsers(@PathVariable UUID clientId, @PathVariable UUID branchId,
+    public List<BranchUserDto> assignUsers(@PathVariable String clientId, @PathVariable String branchId,
                                            @Valid @RequestBody AssignUsersRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
@@ -277,7 +278,7 @@ public class BranchController {
     @DeleteMapping("/branches/{branchId}/users/{userId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public void removeUser(@PathVariable UUID clientId, @PathVariable UUID branchId, @PathVariable UUID userId,
+    public void removeUser(@PathVariable String clientId, @PathVariable String branchId, @PathVariable String userId,
                            @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         branchService.removeUser(clientId, branchId, userId);
@@ -285,26 +286,25 @@ public class BranchController {
 
     @GetMapping("/branch-home")
     @PreAuthorize("hasRole('BRANCH_USER')")
-    public BranchHomeDto home(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+    public BranchHomeDto home(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        List<Branch> branches = branchService.branchesForUser(clientId, UUID.fromString(principal.userId()));
+        List<Branch> branches = branchService.branchesForUser(clientId, principal.userId());
         if (branches.isEmpty()) {
             return new BranchHomeDto("No branch assigned", 0, 0, BigDecimal.ZERO, 0);
         }
-        Set<UUID> branchIds = branches.stream().map(Branch::getId).collect(Collectors.toSet());
+        Set<String> branchIds = branches.stream().map(Branch::getId).collect(Collectors.toSet());
         String name = branches.size() == 1
                 ? branches.get(0).getName()
                 : branches.stream().map(Branch::getName).collect(Collectors.joining(", "));
         List<Bill> bills = billRepository.findByClientIdOrderByCreatedAtDesc(clientId).stream()
                 .filter(bill -> branchIds.contains(bill.getBranchId()))
                 .toList();
-        Set<UUID> billIds = bills.stream().map(Bill::getId).collect(Collectors.toSet());
-        List<BillPayment> pending = billPaymentRepository
-                .findByClientIdAndPaymentStatusOrderByCreatedAtDesc(clientId, Bill.PaymentStatus.PENDING).stream()
-                .filter(payment -> billIds.contains(payment.getBillId()))
+        Set<String> billIds = bills.stream().map(Bill::getId).collect(Collectors.toSet());
+        List<com.b2bfintech.billing.entity.BillFetch> pending = billFetchRepository.findDues(clientId).stream()
+                .filter(fetch -> billIds.contains(fetch.getBillId()))
                 .toList();
         BigDecimal pendingAmount = pending.stream()
-                .map(payment -> payment.getAmount() == null ? BigDecimal.ZERO : payment.getAmount())
+                .map(fetch -> fetch.getBillAmount() == null ? BigDecimal.ZERO : fetch.getBillAmount())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return new BranchHomeDto(name, bills.size(), pending.size(), pendingAmount, branches.size());
     }
@@ -312,14 +312,15 @@ public class BranchController {
     public record BranchRequest(
             @NotBlank @Size(max = 150) String name,
             @Size(max = 500) String address,
+            @Size(max = 100) String state,
+            @Size(max = 150) String location,
             @Size(max = 40) String code,
-            @Size(max = 500) String comment,
             @Size(max = 150) String userName,
             String phoneNumber,
-            List<UUID> userIds) {
+            List<String> userIds) {
     }
 
-    public record AssignUsersRequest(@NotEmpty List<UUID> userIds) {
+    public record AssignUsersRequest(@NotEmpty List<String> userIds) {
     }
 
     public record PoolUserDto(String id, String fullName, String phoneNumber, String role) {
@@ -332,8 +333,9 @@ public class BranchController {
     public record BranchUpdateRequest(
             @NotBlank @Size(max = 150) String name,
             @Size(max = 500) String address,
-            @Size(max = 40) String code,
-            @Size(max = 500) String comment) {
+            @Size(max = 100) String state,
+            @Size(max = 150) String location,
+            @Size(max = 40) String code) {
     }
 
     public record BranchUserRequest(
@@ -346,7 +348,7 @@ public class BranchController {
                 .map(user -> BranchUserDto.from(user, branchService.passwordSet(user.getId())))
                 .toList();
         return new BranchDto(
-                branch.getId().toString(), branch.getName(), branch.getAddress(), branch.getCode(), branch.getComment(), users);
+                branch.getId(), branch.getName(), branch.getAddress(), branch.getState(), branch.getLocation(), branch.getCode(), users);
     }
 
     public record BranchUserDto(String id, String fullName, String phoneNumber, String role, boolean passwordSet) {
@@ -358,7 +360,7 @@ public class BranchController {
     }
 
     public record BranchDto(
-            String id, String name, String address, String code, String comment, List<BranchUserDto> users) {
+            String id, String name, String address, String state, String location, String code, List<BranchUserDto> users) {
     }
 
     public record BranchHomeDto(

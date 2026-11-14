@@ -36,13 +36,13 @@ public class OrganisationSupportTicketController {
 
     @GetMapping
     public List<TicketDto> list(@AuthenticationPrincipal AuthenticatedUser principal) {
-        Function<UUID, String> clientNames = clientNameLookup();
-        Function<UUID, String> clientCodes = clientCodeLookup();
+        Function<String, String> clientNames = clientNameLookup();
+        Function<String, String> clientCodes = clientCodeLookup();
         List<SupportTicket> tickets = service.listAll();
         List<UUID> ids = tickets.stream().map(SupportTicket::getId).toList();
         Map<UUID, SupportTicketMessage> latest = service.latestMessages(ids);
         Map<UUID, Boolean> unread = service.unreadByTicket(
-                parseUserId(principal), SupportTicketMessage.AuthorSide.CLIENT, ids);
+                principal.userId(), SupportTicketMessage.AuthorSide.CLIENT, ids);
         return tickets.stream()
                 .map(t -> TicketDto.from(t, clientNames, clientCodes, latest.get(t.getId()), unread.getOrDefault(t.getId(), false)))
                 .toList();
@@ -51,12 +51,12 @@ public class OrganisationSupportTicketController {
     @GetMapping("/unread-summary")
     public UnreadSummaryDto unreadSummary(@AuthenticationPrincipal AuthenticatedUser principal) {
         return new UnreadSummaryDto(service.unreadTicketCount(
-                parseUserId(principal), SupportTicketMessage.AuthorSide.CLIENT, service.listAll()));
+                principal.userId(), SupportTicketMessage.AuthorSide.CLIENT, service.listAll()));
     }
 
     @GetMapping("/{id}/messages")
     public List<MessageDto> listMessages(@PathVariable UUID id, @AuthenticationPrincipal AuthenticatedUser principal) {
-        return service.listMessages(id, parseUserId(principal)).stream().map(MessageDto::from).toList();
+        return service.listMessages(id, principal.userId()).stream().map(MessageDto::from).toList();
     }
 
     @PostMapping("/{id}/messages")
@@ -65,14 +65,14 @@ public class OrganisationSupportTicketController {
     public MessageDto postMessage(@PathVariable UUID id, @Valid @RequestBody MessageRequest request,
                                    @AuthenticationPrincipal AuthenticatedUser principal) {
         return MessageDto.from(service.addOrganisationMessage(
-                id, parseUserId(principal), actorName(principal), request.body()));
+                id, principal.userId(), actorName(principal), request.body()));
     }
 
     @PostMapping("/{id}/pick-up")
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER')")
     public TicketDto pickUp(@PathVariable UUID id, @AuthenticationPrincipal AuthenticatedUser principal) {
         SupportTicket ticket = service.pickUp(id, principal.phoneNumber());
-        service.markRead(id, parseUserId(principal));
+        service.markRead(id, principal.userId());
         return toDto(ticket);
     }
 
@@ -82,19 +82,19 @@ public class OrganisationSupportTicketController {
                               @AuthenticationPrincipal AuthenticatedUser principal) {
         SupportTicket ticket = service.resolve(
                 id, principal.phoneNumber(), request.resolutionNotes(),
-                parseUserId(principal), actorName(principal));
-        service.markRead(id, parseUserId(principal));
+                principal.userId(), actorName(principal));
+        service.markRead(id, principal.userId());
         return toDto(ticket);
     }
 
-    private Function<UUID, String> clientNameLookup() {
-        Map<UUID, String> names = clientRepository.findAll().stream()
+    private Function<String, String> clientNameLookup() {
+        Map<String, String> names = clientRepository.findAll().stream()
                 .collect(Collectors.toMap(Client::getId, Client::getClientName, (a, b) -> a));
         return id -> names.getOrDefault(id, "Unknown client");
     }
 
-    private Function<UUID, String> clientCodeLookup() {
-        Map<UUID, String> codes = clientRepository.findAll().stream()
+    private Function<String, String> clientCodeLookup() {
+        Map<String, String> codes = clientRepository.findAll().stream()
                 .collect(Collectors.toMap(Client::getId, c -> c.getClientCode() != null ? c.getClientCode() : "", (a, b) -> a));
         return id -> codes.getOrDefault(id, "");
     }
@@ -118,7 +118,7 @@ public class OrganisationSupportTicketController {
                              String description, String status, String raisedBy, String pickedUpBy, String resolvedBy,
                              String resolutionNotes, String lastMessagePreview, Instant lastMessageAt, boolean unread,
                              Instant createdAt, Instant updatedAt) {
-        static TicketDto from(SupportTicket t, Function<UUID, String> clientNames, Function<UUID, String> clientCodes,
+        static TicketDto from(SupportTicket t, Function<String, String> clientNames, Function<String, String> clientCodes,
                                SupportTicketMessage last, boolean unread) {
             return new TicketDto(
                     t.getId().toString(), t.getClientId().toString(), clientNames.apply(t.getClientId()),
@@ -135,16 +135,8 @@ public class OrganisationSupportTicketController {
         static MessageDto from(SupportTicketMessage m) {
             return new MessageDto(
                     m.getId().toString(), m.getTicketId().toString(), m.getAuthorSide().name(),
-                    m.getAuthorUserId() == null ? null : m.getAuthorUserId().toString(),
+                    m.getAuthorUserId(),
                     m.getAuthorName(), m.getBody(), m.getCreatedAt());
-        }
-    }
-
-    private static UUID parseUserId(AuthenticatedUser principal) {
-        try {
-            return UUID.fromString(principal.userId());
-        } catch (IllegalArgumentException ex) {
-            return null;
         }
     }
 

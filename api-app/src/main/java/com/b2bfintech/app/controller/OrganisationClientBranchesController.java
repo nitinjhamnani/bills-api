@@ -23,7 +23,7 @@ public class OrganisationClientBranchesController {
     }
 
     @GetMapping
-    public List<BranchRow> list(@PathVariable UUID clientId) {
+    public List<BranchRow> list(@PathVariable String clientId) {
         return branchService.overview(clientId).stream()
                 .map(row -> new BranchRow(
                         row.branch().getId().toString(),

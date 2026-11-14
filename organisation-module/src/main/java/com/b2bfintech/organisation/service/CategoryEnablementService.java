@@ -47,7 +47,7 @@ public class CategoryEnablementService {
         return organisationRepository.findByCategoryId(categoryId).map(OrganisationCategoryConfig::isEnabled).orElse(false);
     }
 
-    public List<ClientCategoryConfig> listClientRows(UUID clientId) {
+    public List<ClientCategoryConfig> listClientRows(String clientId) {
         return clientRepository.findByClientId(clientId);
     }
 
@@ -57,7 +57,7 @@ public class CategoryEnablementService {
         }
         ClientCategoryConfig config = clientRepository.findByClientIdAndCategoryId(client.getId(), categoryId)
                 .orElseGet(ClientCategoryConfig::new);
-        config.setClient(client);
+        config.setClientId(client.getId());
         config.setCategoryId(categoryId);
         config.setEnabled(enabled);
         config.setEnabledBy(actor);
@@ -65,7 +65,7 @@ public class CategoryEnablementService {
         return clientRepository.save(config);
     }
 
-    public void assertEnabled(UUID clientId, String categoryId) {
+    public void assertEnabled(String clientId, String categoryId) {
         if (!isOrganisationEnabled(categoryId)) {
             throw new BadRequestException("Category '" + categoryId + "' is not enabled for this organisation");
         }

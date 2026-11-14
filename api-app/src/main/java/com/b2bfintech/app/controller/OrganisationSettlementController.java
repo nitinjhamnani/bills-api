@@ -4,12 +4,14 @@ import com.b2bfintech.app.service.CategoryLabels;
 import com.b2bfintech.app.service.VendorSettlementService;
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
-import com.b2bfintech.billing.entity.CommissionCycle;
-import com.b2bfintech.billing.entity.VendorReimbursement;
+import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
+import com.b2bfintech.common.document.DocumentStorageService;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.common.security.AuthenticatedUser;
-import com.b2bfintech.organisation.service.ClientService;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.MediaTypeFactory;
+import org.springframework.web.bind.annotation.PathVariable;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -42,15 +44,18 @@ public class OrganisationSettlementController {
     private final VendorSettlementService settlementService;
     private final BillRepository billRepository;
     private final CategoryLabels categoryLabels;
-    private final ClientService clientService;
+    private final BillPaymentRepository billPaymentRepository;
+    private final DocumentStorageService storageService;
 
     public OrganisationSettlementController(
             VendorSettlementService settlementService, BillRepository billRepository,
-            CategoryLabels categoryLabels, ClientService clientService) {
+            CategoryLabels categoryLabels, BillPaymentRepository billPaymentRepository,
+            DocumentStorageService storageService) {
         this.settlementService = settlementService;
         this.billRepository = billRepository;
         this.categoryLabels = categoryLabels;
-        this.clientService = clientService;
+        this.billPaymentRepository = billPaymentRepository;
+        this.storageService = storageService;
     }
 
     @GetMapping("/verify")
@@ -64,12 +69,33 @@ public class OrganisationSettlementController {
         List<VendorSettlementService.VerifyOutcome> results = new ArrayList<>();
         for (UUID id : request.billPaymentIds()) {
             try {
-                results.add(settlementService.verifyOne(id, principal.phoneNumber()));
+                results.add(settlementService.verifyOne(id, principal));
             } catch (RuntimeException ex) {
                 results.add(new VendorSettlementService.VerifyOutcome(id, false, ex.getMessage()));
             }
         }
         return results;
+    }
+
+    @PostMapping("/{billPaymentId}/bbps-check")
+    public VendorSettlementService.BbpsCheck bbpsCheck(
+            @PathVariable UUID billPaymentId, @AuthenticationPrincipal AuthenticatedUser principal) {
+        return settlementService.bbpsCheck(billPaymentId, principal);
+    }
+
+    @GetMapping("/{billPaymentId}/proof")
+    public ResponseEntity<InputStreamResource> proof(@PathVariable UUID billPaymentId) {
+        BillPayment payment = billPaymentRepository.findById(billPaymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
+        String path = payment.getPaymentProof();
+        if (path == null || path.isBlank()) {
+            throw new ResourceNotFoundException("No proof of payment was attached");
+        }
+        String fileName = path.substring(path.lastIndexOf('/') + 1);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + fileName + "\"")
+                .contentType(MediaTypeFactory.getMediaType(fileName).orElse(MediaType.APPLICATION_OCTET_STREAM))
+                .body(new InputStreamResource(storageService.load(path)));
     }
 
     @GetMapping("/reimburse")
@@ -78,16 +104,15 @@ public class OrganisationSettlementController {
     }
 
     @PostMapping("/reimburse")
-    public ReimbursementResponse reimburse(
+    public VendorSettlementService.PayoutResult reimburse(
             @Valid @RequestBody ReimburseRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
-        VendorReimbursement saved = settlementService.reimburse(
-                request.vendorClientId(), request.billPaymentIds(), request.reference(), principal.phoneNumber());
-        return new ReimbursementResponse(saved.getId(), saved.getTotalAmount(), saved.getReference(), request.billPaymentIds().size());
+        return settlementService.reimburse(
+                request.vendorClientId(), request.billPaymentIds(), request.reference(), request.mode(), principal);
     }
 
     @GetMapping("/paid")
     public List<VendorSettlementService.PaidPayment> paid(
-            @RequestParam(required = false) UUID vendorClientId,
+            @RequestParam(required = false) String vendorClientId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd) {
         return settlementService.paid(vendorClientId, periodStart, periodEnd);
@@ -95,7 +120,7 @@ public class OrganisationSettlementController {
 
     @GetMapping("/commission")
     public VendorSettlementService.CommissionPreview commission(
-            @RequestParam UUID vendorClientId,
+            @RequestParam String vendorClientId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd) {
         return settlementService.preview(vendorClientId, periodStart, periodEnd);
@@ -103,7 +128,7 @@ public class OrganisationSettlementController {
 
     @GetMapping("/commission/export")
     public ResponseEntity<byte[]> exportCommission(
-            @RequestParam UUID vendorClientId,
+            @RequestParam String vendorClientId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd) throws IOException {
         byte[] xlsx = CommissionReportSheet.workbook(settlementService.preview(vendorClientId, periodStart, periodEnd));
@@ -114,20 +139,17 @@ public class OrganisationSettlementController {
     }
 
     @PostMapping("/commission")
-    public CycleResponse closeCommission(
+    public VendorSettlementService.CommissionResult closeCommission(
             @Valid @RequestBody CloseCycleRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
-        CommissionCycle cycle = settlementService.close(
+        return settlementService.close(
                 request.vendorClientId(), request.periodStart(), request.periodEnd(),
-                request.reference(), principal.phoneNumber());
-        return new CycleResponse(cycle.getId(), cycle.getTotalAmount(), cycle.getTotalCommission(), cycle.getReceiptReference());
+                request.reference(), request.mode(), principal);
     }
 
     private BillDtos.BillPaymentDto toDto(BillPayment payment) {
         Bill bill = billRepository.findById(payment.getBillId())
                 .orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
-        String vendorName = payment.getAssignedVendorClientId() == null
-                ? null
-                : clientService.getById(payment.getAssignedVendorClientId()).getClientName();
+        String vendorName = payment.isWithVendor() ? payment.getBillAssignedToName() : null;
         return BillDtos.BillPaymentDto.from(
                 payment, bill, categoryLabels.lookup(), false, false, id -> vendorName);
     }
@@ -136,21 +158,18 @@ public class OrganisationSettlementController {
     }
 
     public record ReimburseRequest(
-            @NotNull UUID vendorClientId,
+            @NotNull String vendorClientId,
             @NotEmpty List<UUID> billPaymentIds,
-            @NotBlank @Size(max = 120) String reference) {
+            @NotBlank @Size(max = 120) String reference,
+            String mode) {
     }
 
     public record CloseCycleRequest(
-            @NotNull UUID vendorClientId,
+            @NotNull String vendorClientId,
             @NotNull LocalDate periodStart,
             @NotNull LocalDate periodEnd,
-            @NotBlank @Size(max = 120) String reference) {
+            @NotBlank @Size(max = 120) String reference,
+            String mode) {
     }
 
-    public record ReimbursementResponse(UUID id, java.math.BigDecimal totalAmount, String reference, int billCount) {
-    }
-
-    public record CycleResponse(UUID id, java.math.BigDecimal totalAmount, java.math.BigDecimal totalCommission, String reference) {
-    }
 }

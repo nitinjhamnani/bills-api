@@ -1,38 +1,46 @@
 package com.b2bfintech.app.service;
 
+import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
+import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.BadRequestException;
+import com.b2bfintech.organisation.entity.Commission;
 import org.springframework.stereotype.Service;
 
-import java.util.UUID;
-
-/** A vendor who still has a bill waiting cannot be paused, removed, or have their rule deactivated. */
+/**
+ * A commission cannot be deactivated or deleted while its vendor still holds an unpaid bill on
+ * that operator and amount range.
+ */
 @Service
 public class CommissionBillGuard {
 
     private final BillPaymentRepository billPaymentRepository;
+    private final BillRepository billRepository;
 
-    public CommissionBillGuard(BillPaymentRepository billPaymentRepository) {
+    public CommissionBillGuard(BillPaymentRepository billPaymentRepository, BillRepository billRepository) {
         this.billPaymentRepository = billPaymentRepository;
+        this.billRepository = billRepository;
     }
 
-    public void assertRuleClear(UUID ruleId) {
-        long waiting = billPaymentRepository.countByCommissionRuleIdAndOrgStatus(ruleId, BillPayment.OrgStatus.PENDING);
+    public void assertClear(Commission commission) {
+        long waiting = billPaymentRepository.findAssignedToVendor(commission.getVendorId()).stream()
+                .filter(payment -> payment.getOrgStatus() == BillPayment.OrgStatus.PENDING)
+                .filter(payment -> commission.covers(payment.getBillAmount()))
+                .filter(payment -> onOperator(payment, commission))
+                .count();
         if (waiting > 0) {
             throw new BadRequestException(waiting == 1
-                    ? "A bill is still waiting with a vendor on this rule. Mark it paid or send it back first."
-                    : waiting + " bills are still waiting with vendors on this rule. Mark them paid or send them back first.");
+                    ? commission.getVendorName() + " still has a bill waiting on this commission. Mark it paid or send it back first."
+                    : commission.getVendorName() + " still has " + waiting
+                            + " bills waiting on this commission. Mark them paid or send them back first.");
         }
     }
 
-    public void assertVendorClear(UUID ruleId, UUID vendorClientId) {
-        long waiting = billPaymentRepository.countByCommissionRuleIdAndAssignedVendorClientIdAndOrgStatus(
-                ruleId, vendorClientId, BillPayment.OrgStatus.PENDING);
-        if (waiting > 0) {
-            throw new BadRequestException(waiting == 1
-                    ? "This vendor still has a bill waiting. Mark it paid or send it back first."
-                    : "This vendor still has " + waiting + " bills waiting. Mark them paid or send them back first.");
-        }
+    private boolean onOperator(BillPayment payment, Commission commission) {
+        Bill bill = billRepository.findById(payment.getBillId()).orElse(null);
+        return bill != null
+                && commission.getCategoryId().equals(bill.getCategoryId())
+                && commission.getOperatorName().equalsIgnoreCase(bill.getOperatorName());
     }
 }

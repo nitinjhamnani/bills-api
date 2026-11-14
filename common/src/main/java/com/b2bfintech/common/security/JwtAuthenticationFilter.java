@@ -1,6 +1,7 @@
 package com.b2bfintech.common.security;
 
 import com.b2bfintech.common.tenant.TenantContext;
+import com.b2bfintech.common.web.RequestIds;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
@@ -70,6 +71,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
                     var authentication = new UsernamePasswordAuthenticationToken(principal, null, authorities);
                     SecurityContextHolder.getContext().setAuthentication(authentication);
+                    request.setAttribute(RequestIds.USER_ATTRIBUTE, principal.userId());
 
                     if (principal.tenantSchema() != null) {
                         TenantContext.setCurrentTenant(principal.tenantSchema());

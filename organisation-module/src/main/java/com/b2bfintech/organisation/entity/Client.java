@@ -1,78 +1,196 @@
 package com.b2bfintech.organisation.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Table;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
-import java.time.Instant;
-import java.util.UUID;
-
-/** A company Paytrix onboards. Corporates create and pay bills. Vendors are the other client type. */
-@Entity
-@Table(name = "client")
-@Getter
-@Setter
-@NoArgsConstructor
+/**
+ * The corporate or vendor the rest of the application already talks to.
+ * The row itself lives in {@code corp_details} or {@code vendor_details}.
+ */
 public class Client {
 
-    @Id
-    @GeneratedValue
-    private UUID id;
-
-    @Column(name = "client_name", nullable = false)
+    private String id;
     private String clientName;
-
-    /** 8-character code: {@code CO} or {@code VD}, then 3 letters from the client name and 3 random digits,
-     * generated once at onboarding and shown everywhere the client name is. */
-    @Column(name = "client_code", unique = true, length = 8)
-    private String clientCode;
-
-    @Column(name = "contact_phone")
     private String contactPhone;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "client_type", nullable = false)
-    private ClientType clientType = ClientType.CORPORATE;
-
-    /** Set only for a corporate. Chooses the onboarding form. Vendors stay null. */
-    @Enumerated(EnumType.STRING)
-    @Column(name = "corporate_kind", length = 20)
+    private String email;
+    private String address;
+    private String state;
+    private String location;
+    private ClientType clientType;
     private CorporateKind corporateKind;
+    private boolean active;
+    private String onboardingStatus;
+    private String agreementStatus;
+    private boolean agreementSigned;
+    private String onboardedBy;
+    private String onboardedById;
 
-    /** New clients stay PENDING until Paytrix activates them. Existing rows keep whatever status they already have. */
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private ClientStatus status = ClientStatus.PENDING;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
-
-    /** The Paytrix sales person who brought this corporate in. One corporate has at most one. */
-    @Column(name = "sales_user_id")
-    private UUID salesUserId;
-
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
-
-    @PrePersist
-    void onCreate() {
-        Instant now = Instant.now();
-        createdAt = now;
-        updatedAt = now;
+    public String getId() {
+        return id;
     }
 
-    @PreUpdate
-    void onUpdate() {
-        updatedAt = Instant.now();
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    /** The id is the code. A corporate id starts with CO. */
+    public String getClientCode() {
+        return id;
+    }
+
+    public void setClientCode(String clientCode) {
+        if (id == null || id.isBlank()) {
+            id = clientCode;
+        }
+    }
+
+    public String getClientName() {
+        return clientName;
+    }
+
+    public void setClientName(String clientName) {
+        this.clientName = clientName;
+    }
+
+    public String getContactPhone() {
+        return contactPhone;
+    }
+
+    public void setContactPhone(String contactPhone) {
+        this.contactPhone = contactPhone;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
+    }
+
+    public String getState() {
+        return state;
+    }
+
+    public void setState(String state) {
+        this.state = state;
+    }
+
+    public String getLocation() {
+        return location;
+    }
+
+    public void setLocation(String location) {
+        this.location = location;
+    }
+
+    public ClientType getClientType() {
+        return clientType;
+    }
+
+    public void setClientType(ClientType clientType) {
+        this.clientType = clientType;
+    }
+
+    public CorporateKind getCorporateKind() {
+        return corporateKind;
+    }
+
+    public void setCorporateKind(CorporateKind corporateKind) {
+        this.corporateKind = corporateKind;
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
+    }
+
+    public String getOnboardingStatus() {
+        return onboardingStatus;
+    }
+
+    public void setOnboardingStatus(String onboardingStatus) {
+        this.onboardingStatus = onboardingStatus;
+    }
+
+    public String getAgreementStatus() {
+        return agreementStatus;
+    }
+
+    public void setAgreementStatus(String agreementStatus) {
+        this.agreementStatus = agreementStatus;
+    }
+
+    public boolean isAgreementSigned() {
+        return agreementSigned;
+    }
+
+    public void setAgreementSigned(boolean agreementSigned) {
+        this.agreementSigned = agreementSigned;
+    }
+
+    public String getOnboardedBy() {
+        return onboardedBy;
+    }
+
+    public void setOnboardedBy(String onboardedBy) {
+        this.onboardedBy = onboardedBy;
+    }
+
+    public String getOnboardedById() {
+        return onboardedById;
+    }
+
+    public void setOnboardedById(String onboardedById) {
+        this.onboardedById = onboardedById;
+    }
+
+    /** Active companies stay active. One that has not finished eKYC and the contract is still pending. */
+    public ClientStatus getStatus() {
+        if (active) {
+            return ClientStatus.ACTIVE;
+        }
+        if (clientType == ClientType.CORPORATE
+                && (!"COMPLETE".equals(onboardingStatus) || !"SIGNED".equals(agreementStatus))) {
+            return ClientStatus.PENDING;
+        }
+        if (clientType == ClientType.VENDOR && !"SIGNED".equals(agreementStatus)) {
+            return ClientStatus.PENDING;
+        }
+        return ClientStatus.SUSPENDED;
+    }
+
+    public void setStatus(ClientStatus status) {
+        this.active = status == ClientStatus.ACTIVE;
+    }
+
+    /** The sales person, when a corporate was brought in by sales. */
+    public java.time.Instant getCreatedAt() {
+        return null;
+    }
+
+    public String getSalesUserId() {
+        return "ORG_SALES".equals(onboardedBy) ? onboardedById : null;
+    }
+
+    public void setSalesUserId(String salesUserId) {
+        if (salesUserId == null || salesUserId.isBlank()) {
+            if ("ORG_SALES".equals(onboardedBy)) {
+                onboardedBy = null;
+                onboardedById = null;
+            }
+            return;
+        }
+        onboardedBy = "ORG_SALES";
+        onboardedById = salesUserId;
     }
 
     public enum ClientStatus {

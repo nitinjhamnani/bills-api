@@ -18,6 +18,12 @@ public interface BillingProvider {
      */
     FetchedBill fetchBill(BbpsProvider.BillFetchCommand command);
 
+    /** The provider's HTTP status and raw body. A status other than 200 is not stored. */
+    HttpBillFetch fetchBillHttp(BbpsProvider.BillFetchCommand command);
+
+    record HttpBillFetch(int statusCode, String body) {
+    }
+
     PaymentResult pay(String idempotencyKey, String billServiceCode, String customerBillAccountNumber, BigDecimal amount);
 
     /** Mirrors the shape of a real BBPS Bill Fetch response (customer/bill identification + amount + dates). */

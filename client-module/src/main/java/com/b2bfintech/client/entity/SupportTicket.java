@@ -28,8 +28,8 @@ public class SupportTicket {
     @GeneratedValue
     private UUID id;
 
-    @Column(name = "client_id", nullable = false)
-    private UUID clientId;
+    @Column(name = "client_id", nullable = false, length = 8)
+    private String clientId;
 
     @Column(nullable = false)
     private String subject;

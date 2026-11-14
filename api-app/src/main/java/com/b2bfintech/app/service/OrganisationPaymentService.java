@@ -1,10 +1,10 @@
 package com.b2bfintech.app.service;
 
-import com.b2bfintech.billing.entity.Bill;
+import com.b2bfintech.billing.entity.BillFetch;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.entity.BillPaymentLog;
+import com.b2bfintech.billing.repository.BillFetchRepository;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
-import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.common.security.AuthenticatedUser;
@@ -15,25 +15,23 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * The organisation's side of settling a {@link BillPayment}: pick it up, then either mark it paid
- * (records how it was actually settled with the biller) or mark it failed (sent back to the queue
- * for a retry, with the reason recorded) - the simple {@code PENDING -> IN_PROCESS -> PAID} flow
- * the user specified. Amounts at or above the BILL_PAYMENT approval threshold need a
- * distinct checker (or an organisation admin) to mark paid; {@code IN_PROCESS} is that wait.
+ * Paytrix settling a bill it holds: pick it up, then mark it paid with the references, or mark it
+ * failed and send it back to the queue. Amounts at or above the BILL_PAYMENT approval threshold
+ * need a distinct checker or an organisation admin to mark paid.
  */
 @Service
 public class OrganisationPaymentService {
 
     private final BillPaymentRepository billPaymentRepository;
-    private final BillRepository billRepository;
+    private final BillFetchRepository billFetchRepository;
     private final BillActivityLogService activityLogService;
     private final MakerCheckerPolicy makerCheckerPolicy;
 
     public OrganisationPaymentService(
-            BillPaymentRepository billPaymentRepository, BillRepository billRepository,
+            BillPaymentRepository billPaymentRepository, BillFetchRepository billFetchRepository,
             BillActivityLogService activityLogService, MakerCheckerPolicy makerCheckerPolicy) {
         this.billPaymentRepository = billPaymentRepository;
-        this.billRepository = billRepository;
+        this.billFetchRepository = billFetchRepository;
         this.activityLogService = activityLogService;
         this.makerCheckerPolicy = makerCheckerPolicy;
     }
@@ -41,13 +39,11 @@ public class OrganisationPaymentService {
     @Transactional
     public BillPayment pickUp(UUID id, String actor) {
         BillPayment payment = getOrThrow(id);
+        refuseAssigned(payment);
         if (payment.getOrgStatus() != BillPayment.OrgStatus.PENDING) {
             throw new BadRequestException("Bill payment is not pending pick-up");
         }
-        refuseAssigned(payment);
-        payment.setOrgStatus(BillPayment.OrgStatus.IN_PROCESS);
-        payment.setOrgPickedUpAt(Instant.now());
-        payment.setOrgPickedUpBy(actor);
+        payment.setBillAssignedToStatus(BillPayment.AssignedStatus.IN_PROGRESS);
         payment = billPaymentRepository.save(payment);
         activityLogService.log(payment.getBillId(), payment.getId(), BillPaymentLog.EventType.ORG_PICKED_UP,
                 "Picked up by " + actor, actor);
@@ -55,9 +51,9 @@ public class OrganisationPaymentService {
     }
 
     /**
-     * Excel import path: a row marked Paid/Failed is the settlement action. PENDING rows are
+     * Excel import path: a row marked Paid/Failed is the settlement action. Pending rows are
      * picked up first so the workbook does not fail just because pick-up was not done in the UI.
-     * NA (client has not paid) is rejected. Already-PAID rows are left as-is.
+     * Already paid rows are left as they are.
      */
     @Transactional
     public BillPayment settleFromImport(
@@ -68,9 +64,6 @@ public class OrganisationPaymentService {
         if (payment.getOrgStatus() == BillPayment.OrgStatus.PAID) {
             return payment;
         }
-        if (payment.getOrgStatus() == BillPayment.OrgStatus.NA) {
-            throw new BadRequestException("This bill is still waiting for the client to pay");
-        }
         if (payment.getOrgStatus() == BillPayment.OrgStatus.PENDING) {
             pickUp(id, actor.phoneNumber());
         }
@@ -80,9 +73,7 @@ public class OrganisationPaymentService {
         return markFailed(id, actor.phoneNumber(), failureReason);
     }
 
-    /** Requires the bill payment to already be picked up (IN_PROCESS) - this is enforced the same
-     * way whether the caller is a single "Mark paid" click or a bulk Excel upload row, so a bill
-     * can never be marked paid without first passing through pick-up. */
+    /** The bill must be picked up first, whether this is one click or an Excel row. */
     @Transactional
     public BillPayment markPaid(UUID id, AuthenticatedUser actor, String bbpsTransactionId, String externalTransactionId, String billType) {
         BillPayment payment = getOrThrow(id);
@@ -91,29 +82,23 @@ public class OrganisationPaymentService {
             throw new BadRequestException("Bill payment must be picked up before it can be marked paid");
         }
         makerCheckerPolicy.assertCanSettleBill(actor, payment);
-        String actorPhone = actor.phoneNumber();
-        payment.setOrgStatus(BillPayment.OrgStatus.PAID);
-        payment.setBillStatus(Bill.BillStatus.PAID);
-        payment.setOrgPaidAt(Instant.now());
-        payment.setOrgPaidBy(actorPhone);
-        payment.setBbpsTransactionId(bbpsTransactionId);
-        payment.setExternalTransactionId(externalTransactionId);
-        payment.setBillType(billType);
+        payment.setBillPaidOn(Instant.now());
+        payment.setBbpsExternalReference(blankToNull(bbpsTransactionId));
+        payment.setTransactionReferenceNumber(blankToNull(externalTransactionId));
         payment = billPaymentRepository.save(payment);
 
-        Bill bill = billRepository.findById(payment.getBillId())
-                .orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
-        bill.setBillStatus(Bill.BillStatus.PAID);
-        billRepository.save(bill);
+        BillFetch fetch = payment.getBillFetch();
+        fetch.setBillStatus(BillFetch.BillStatus.PAID);
+        fetch.setBillPaymentStatus(BillFetch.PaymentStatus.PAID);
+        billFetchRepository.save(fetch);
 
         activityLogService.log(payment.getBillId(), payment.getId(), BillPaymentLog.EventType.ORG_PAID,
-                "Marked paid by " + actorPhone, actorPhone);
+                "Marked paid by " + actor.phoneNumber(), actor.phoneNumber());
+        MoneyActionLog.record("mark_paid", actor.userId(), payment.getId().toString());
         return payment;
     }
 
-    /** Sends it back to the queue (org_status PENDING) with the failure reason recorded, rather
-     * than a dead end - the organisation can pick it up and retry once the underlying issue (biller
-     * outage, wrong details, etc.) is resolved. */
+    /** Sends it back to the queue so Paytrix can pick it up and try again. The reason is logged. */
     @Transactional
     public BillPayment markFailed(UUID id, String actor, String reason) {
         BillPayment payment = getOrThrow(id);
@@ -121,17 +106,20 @@ public class OrganisationPaymentService {
         if (payment.getOrgStatus() != BillPayment.OrgStatus.IN_PROCESS) {
             throw new BadRequestException("Bill payment must be picked up before it can be marked failed");
         }
-        payment.setOrgStatus(BillPayment.OrgStatus.PENDING);
-        payment.setBillPayFailureReason(reason);
+        payment.setBillAssignedToStatus(BillPayment.AssignedStatus.PENDING);
         payment = billPaymentRepository.save(payment);
         activityLogService.log(payment.getBillId(), payment.getId(), BillPaymentLog.EventType.ORG_MARK_FAILED, reason, actor);
         return payment;
     }
 
     private static void refuseAssigned(BillPayment payment) {
-        if (payment.getAssignedVendorClientId() != null) {
-            throw new BadRequestException("This bill is with a vendor. Verify it and pay the vendor from Settlements.");
+        if (payment.isWithVendor()) {
+            throw new BadRequestException("This bill is with a vendor. Verify it from Settlements.");
         }
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private BillPayment getOrThrow(UUID id) {

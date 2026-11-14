@@ -26,20 +26,24 @@ public class BbpsCatalogSyncService {
 
     private final ObjectProvider<BbpsProvider> providers;
     private final BbpsCategoryRepository categoryRepository;
+    private final CatalogCache catalogCache;
     private final TransactionTemplate transactions;
 
     public BbpsCatalogSyncService(
             ObjectProvider<BbpsProvider> providers,
             BbpsCategoryRepository categoryRepository,
+            CatalogCache catalogCache,
             PlatformTransactionManager transactionManager) {
         this.providers = providers;
         this.categoryRepository = categoryRepository;
+        this.catalogCache = catalogCache;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
     @Async
     @EventListener(ApplicationReadyEvent.class)
     public void syncOnStartup() {
+        refreshCategoryCache();
         try {
             SyncSummary summary = sync();
             log.info("Startup BBPS catalog sync {}", summary);
@@ -80,7 +84,12 @@ public class BbpsCatalogSyncService {
                 categoryRepository.upsert(provider.providerCode(), category);
             }
         });
+        refreshCategoryCache();
         return fetched.size();
+    }
+
+    private void refreshCategoryCache() {
+        catalogCache.replaceCategories(categoryRepository.findAllActive());
     }
 
     public record SyncSummary(boolean skipped, int categories, String error) {

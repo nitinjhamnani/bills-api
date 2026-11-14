@@ -8,7 +8,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface ClientCategoryConfigRepository extends JpaRepository<ClientCategoryConfig, UUID> {
-    List<ClientCategoryConfig> findByClientId(UUID clientId);
+    List<ClientCategoryConfig> findByClientId(String clientId);
 
-    Optional<ClientCategoryConfig> findByClientIdAndCategoryId(UUID clientId, String categoryId);
+    Optional<ClientCategoryConfig> findByClientIdAndCategoryId(String clientId, String categoryId);
 }

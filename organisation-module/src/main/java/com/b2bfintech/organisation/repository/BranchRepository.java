@@ -6,20 +6,19 @@ import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
-public interface BranchRepository extends JpaRepository<Branch, UUID> {
-    List<Branch> findByClientIdOrderByNameAsc(UUID clientId);
+public interface BranchRepository extends JpaRepository<Branch, String> {
+    List<Branch> findBySourceIdOrderByNameAsc(String sourceId);
 
-    Optional<Branch> findByClientIdAndCode(UUID clientId, String code);
+    Optional<Branch> findBySourceIdAndCode(String sourceId, String code);
 
-    long countByClientId(UUID clientId);
+    long countBySourceId(String sourceId);
 
-    @Query("select b.clientId as clientId, count(b) as branchCount from Branch b group by b.clientId")
-    List<BranchCount> countGroupedByClientId();
+    @Query("select b.sourceId as sourceId, count(b) as branchCount from Branch b group by b.sourceId")
+    List<BranchCount> countGroupedBySourceId();
 
     interface BranchCount {
-        UUID getClientId();
+        String getSourceId();
         long getBranchCount();
     }
 }

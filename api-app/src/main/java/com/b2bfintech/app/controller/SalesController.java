@@ -38,7 +38,7 @@ public class SalesController {
     public SalesPaidReport paidBills(
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to,
-            @RequestParam(required = false) List<UUID> clientId,
+            @RequestParam(required = false) List<String> clientId,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return salesPortfolioService.paidInRange(userId(principal), range.from(), range.to(), clientId);
@@ -46,17 +46,17 @@ public class SalesController {
 
     @GetMapping("/corporates/{clientId}")
     public CorporateSummary corporate(
-            @AuthenticationPrincipal AuthenticatedUser principal, @PathVariable UUID clientId) {
+            @AuthenticationPrincipal AuthenticatedUser principal, @PathVariable String clientId) {
         return salesPortfolioService.corporate(userId(principal), clientId);
     }
 
     @GetMapping("/corporates/{clientId}/bills")
     public List<SalesBill> bills(
-            @AuthenticationPrincipal AuthenticatedUser principal, @PathVariable UUID clientId) {
+            @AuthenticationPrincipal AuthenticatedUser principal, @PathVariable String clientId) {
         return salesPortfolioService.bills(userId(principal), clientId);
     }
 
-    private static UUID userId(AuthenticatedUser principal) {
-        return UUID.fromString(principal.userId());
+    private static String userId(AuthenticatedUser principal) {
+        return principal.userId();
     }
 }

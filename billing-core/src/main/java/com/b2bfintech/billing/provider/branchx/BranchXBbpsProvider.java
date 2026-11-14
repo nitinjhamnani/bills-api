@@ -2,12 +2,16 @@ package com.b2bfintech.billing.provider.branchx;
 
 import com.b2bfintech.common.spi.BillFetchFailedException;
 import com.b2bfintech.common.spi.BillingProvider;
+import com.b2bfintech.common.spi.BillingProvider.HttpBillFetch;
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -29,6 +33,8 @@ import java.util.Set;
 public class BranchXBbpsProvider implements BbpsProvider, BillingProvider {
 
     public static final String PROVIDER_CODE = "BRANCHX";
+
+    private static final Logger log = LoggerFactory.getLogger(BranchXBbpsProvider.class);
 
     /** Category name to the provider_type_id values that return it. Insurance is split across three. */
     static final Map<String, List<String>> FETCH_CATEGORIES = new LinkedHashMap<>();
@@ -99,6 +105,19 @@ public class BranchXBbpsProvider implements BbpsProvider, BillingProvider {
 
     @Override
     public FetchedBill fetchBill(BillFetchCommand command) {
+        HttpBillFetch http = fetchBillHttp(command);
+        if (http.statusCode() != 200) {
+            throw new BillFetchFailedException("Bill provider returned HTTP " + http.statusCode(), false);
+        }
+        try {
+            return BranchXMapper.bill(json.readTree(http.body() == null ? "" : http.body()));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new BillFetchFailedException("Bill provider returned a response that could not be read", false);
+        }
+    }
+
+    @Override
+    public HttpBillFetch fetchBillHttp(BillFetchCommand command) {
         ObjectNode payload = json.createObjectNode();
         payload.put("RequestID", BranchXMapper.requestId(command.clientReferenceId()));
         payload.put("UserMobileNumber", command.customerMobileNumber() == null ? "" : command.customerMobileNumber());
@@ -113,7 +132,7 @@ public class BranchXBbpsProvider implements BbpsProvider, BillingProvider {
                 BranchXMapper.addInput(inputs, name, value);
             });
         }
-        return BranchXMapper.bill(post("/BillPayment/bill/fetch", payload));
+        return postRaw("/BillPayment/bill/fetch", payload);
     }
 
     @Override
@@ -122,37 +141,74 @@ public class BranchXBbpsProvider implements BbpsProvider, BillingProvider {
     }
 
     private JsonNode get(String path, Map<String, String> query) {
+        ExchangeResult result = exchange(HttpMethod.GET, path, query, null);
+        if (result.body().isBlank()) {
+            throw new BillFetchFailedException("Bill provider returned an empty response", false);
+        }
         try {
-            JsonNode body = client.get()
-                    .uri(builder -> {
-                        builder.path(path);
-                        query.forEach(builder::queryParam);
-                        return builder.build();
-                    })
-                    .retrieve()
-                    .body(JsonNode.class);
-            if (body == null) {
-                throw new BillFetchFailedException("Bill provider returned an empty response", false);
+            return json.readTree(result.body());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new BillFetchFailedException("Bill provider returned a response that could not be read", false);
+        }
+    }
+
+    private HttpBillFetch postRaw(String path, JsonNode payload) {
+        ExchangeResult result = exchange(HttpMethod.POST, path, Map.of(), payload);
+        return new HttpBillFetch(result.status(), result.body());
+    }
+
+    private ExchangeResult exchange(HttpMethod method, String path, Map<String, String> query, JsonNode payload) {
+        long started = System.nanoTime();
+        String loggedPath = pathWithQuery(path, query);
+        String requestBody = payload == null ? "" : redact(payload.toString());
+        try {
+            var spec = client.method(method).uri(builder -> {
+                builder.path(path);
+                if (query != null) {
+                    query.forEach(builder::queryParam);
+                }
+                return builder.build();
+            });
+            if (payload != null) {
+                spec = spec.body(payload);
             }
-            return body;
-        } catch (BillFetchFailedException ex) {
-            throw ex;
+            return spec.exchange((request, response) -> {
+                String responseBody = new String(
+                        response.getBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                int status = response.getStatusCode().value();
+                log.info("provider=branchx method={} path={} status={} durationMs={} request={} response={}",
+                        method.name(), loggedPath, status,
+                        (System.nanoTime() - started) / 1_000_000,
+                        requestBody, redact(responseBody));
+                return new ExchangeResult(status, responseBody);
+            });
         } catch (RestClientException ex) {
+            log.info("provider=branchx method={} path={} status=0 durationMs={} request={} response=unreachable",
+                    method.name(), loggedPath, (System.nanoTime() - started) / 1_000_000, requestBody);
             throw new BillFetchFailedException("Bill provider could not be reached", false);
         }
     }
 
-    private JsonNode post(String path, JsonNode payload) {
-        try {
-            JsonNode body = client.post().uri(path).body(payload).retrieve().body(JsonNode.class);
-            if (body == null) {
-                throw new BillFetchFailedException("Bill provider returned an empty response", false);
-            }
-            return body;
-        } catch (BillFetchFailedException ex) {
-            throw ex;
-        } catch (RestClientException ex) {
-            throw new BillFetchFailedException("Bill provider could not be reached", false);
+    private record ExchangeResult(int status, String body) {
+    }
+
+    private static String pathWithQuery(String path, Map<String, String> query) {
+        if (query == null || query.isEmpty()) {
+            return path;
         }
+        StringBuilder builder = new StringBuilder(path).append('?');
+        query.forEach((key, value) -> builder.append(key).append('=').append(value).append('&'));
+        builder.setLength(builder.length() - 1);
+        return builder.toString();
+    }
+
+    /** Drops API keys and tokens if a provider echoes them in a body. */
+    private static String redact(String body) {
+        if (body == null || body.isBlank()) {
+            return "";
+        }
+        return body
+                .replaceAll("(?i)(\"(?:apiToken|api_token|apiKey|api_key|token|authorization)\"\\s*:\\s*\")[^\"]*\"", "$1[redacted]\"")
+                .replaceAll("(?i)((?:apiToken|api_token|apiKey|api_key|token)=)[^&\\s]+", "$1[redacted]");
     }
 }

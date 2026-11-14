@@ -4,10 +4,10 @@ import com.b2bfintech.billing.entity.BillDispute;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.repository.BillDisputeRepository;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
+import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.wallet.entity.LedgerEntry;
-import com.b2bfintech.wallet.entity.WalletAccount;
 import com.b2bfintech.wallet.service.WalletService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,11 +26,14 @@ public class DisputeService {
     private final BillDisputeRepository disputeRepository;
     private final BillPaymentRepository billPaymentRepository;
     private final WalletService walletService;
+    private final BillRepository billRepository;
 
-    public DisputeService(BillDisputeRepository disputeRepository, BillPaymentRepository billPaymentRepository, WalletService walletService) {
+    public DisputeService(BillDisputeRepository disputeRepository, BillPaymentRepository billPaymentRepository,
+                          WalletService walletService, BillRepository billRepository) {
         this.disputeRepository = disputeRepository;
         this.billPaymentRepository = billPaymentRepository;
         this.walletService = walletService;
+        this.billRepository = billRepository;
     }
 
     @Transactional
@@ -46,10 +49,11 @@ public class DisputeService {
     }
 
     @Transactional
-    public BillDispute resolve(UUID disputeId, boolean valid, String notes, String resolvedBy) {
+    public BillDispute resolve(UUID disputeId, boolean valid, String notes, String resolvedBy, String resolvedByUserId) {
         BillDispute dispute = disputeRepository.findById(disputeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Dispute not found"));
-        if (dispute.getStatus() == BillDispute.Status.RESOLVED_VALID || dispute.getStatus() == BillDispute.Status.RESOLVED_INVALID) {
+        if (dispute.getStatus() == BillDispute.Status.RESOLVED_VALID
+                || dispute.getStatus() == BillDispute.Status.RESOLVED_INVALID) {
             throw new BadRequestException("This dispute has already been resolved");
         }
         dispute.setResolutionNotes(notes);
@@ -60,10 +64,10 @@ public class DisputeService {
         if (valid) {
             BillPayment payment = billPaymentRepository.findById(dispute.getBillPaymentId())
                     .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
-            walletService.credit(
-                    payment.getClientId(), WalletAccount.WalletType.WALLET, payment.getAmount(),
-                    LedgerEntry.ReferenceType.REFUND, payment.getId().toString(), "refund-dispute-" + dispute.getId(),
-                    "Refund for upheld dispute on bill payment " + payment.getId());
+            String category = billRepository.findById(payment.getBillId())
+                    .map(bill -> LedgerEntry.categoryOf(bill.getCategoryName()))
+                    .orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
+            walletService.credit(payment.getClientId(), payment.getAmount(), category, resolvedByUserId);
         }
         return dispute;
     }

@@ -5,7 +5,6 @@ import com.b2bfintech.organisation.repository.AppUserRepository;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
-import java.util.UUID;
 
 @Component
 public class AppUserCodeLookup implements UserCodeLookup {
@@ -21,10 +20,6 @@ public class AppUserCodeLookup implements UserCodeLookup {
         if (userId == null || userId.isBlank()) {
             return Optional.empty();
         }
-        try {
-            return appUserRepository.findById(UUID.fromString(userId)).map(user -> user.getUserCode());
-        } catch (IllegalArgumentException ex) {
-            return Optional.empty();
-        }
+        return appUserRepository.findById(userId).map(user -> user.getUserId());
     }
 }

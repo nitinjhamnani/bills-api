@@ -24,7 +24,7 @@ public class AsyncBillFetch {
     }
 
     @Async
-    public void fetch(UUID clientId, UUID billId) {
+    public void fetch(String clientId, String billId) {
         try {
             Bill bill = billRepository.findById(billId).orElse(null);
             if (bill == null || !clientId.equals(bill.getClientId())) {

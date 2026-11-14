@@ -57,16 +57,16 @@ public class OrganisationUserController {
     @GetMapping
     public List<UserDto> list() {
         return tenantUserService.listAll().stream()
-                .filter(u -> u.getClient() == null) // organisation-side users only; clients have their own listing
+                .filter(AppUser::isPaytrix)
                 .map(UserDto::from)
                 .toList();
     }
 
     @GetMapping("/{id}")
-    public UserDetailDto get(@PathVariable UUID id) {
+    public UserDetailDto get(@PathVariable String id) {
         AppUser user = tenantUserService.getById(id);
         List<AssignedCorporate> corporates = List.of();
-        if ("SALES".equals(user.getRole().getName())) {
+        if (user.hasUserType(AppUser.UserType.ORG_SALES)) {
             corporates = clientService.listForSalesPerson(id).stream()
                     .filter(client -> client.getClientType() == Client.ClientType.CORPORATE)
                     .map(AssignedCorporate::from)
@@ -77,10 +77,10 @@ public class OrganisationUserController {
 
     /** Full profile edit - name, email, and role/permissions. Phone number (the login identifier) is immutable. */
     @PutMapping("/{id}")
-    public UserDto update(@PathVariable UUID id, @Valid @RequestBody UpdateUserRequest request) {
+    public UserDto update(@PathVariable String id, @Valid @RequestBody UpdateUserRequest request) {
         validateRole(request.role());
         AppUser existing = tenantUserService.getById(id);
-        if ("SALES".equals(existing.getRole().getName())
+        if (existing.hasUserType(AppUser.UserType.ORG_SALES)
                 && !"SALES".equals(request.role())
                 && clientService.hasSalesAssignments(id)) {
             throw new BadRequestException("This person is still assigned to corporates. Clear those assignments first.");
@@ -90,17 +90,17 @@ public class OrganisationUserController {
     }
 
     @PatchMapping("/{id}/password")
-    public void setPassword(@PathVariable UUID id, @Valid @RequestBody SetPasswordRequest request) {
+    public void setPassword(@PathVariable String id, @Valid @RequestBody SetPasswordRequest request) {
         provisioningService.setUserPassword(id, request.password());
     }
 
     @PatchMapping("/{id}/suspend")
-    public void suspend(@PathVariable UUID id) {
+    public void suspend(@PathVariable String id) {
         provisioningService.suspendUser(id);
     }
 
     @PatchMapping("/{id}/reactivate")
-    public void reactivate(@PathVariable UUID id) {
+    public void reactivate(@PathVariable String id) {
         provisioningService.reactivateUser(id);
     }
 

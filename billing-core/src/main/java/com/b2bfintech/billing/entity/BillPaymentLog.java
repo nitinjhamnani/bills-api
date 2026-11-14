@@ -31,8 +31,8 @@ public class BillPaymentLog {
     @GeneratedValue
     private UUID id;
 
-    @Column(name = "bill_id", nullable = false)
-    private UUID billId;
+    @Column(name = "bill_id", nullable = false, length = 10)
+    private String billId;
 
     @Column(name = "bill_payment_id")
     private UUID billPaymentId;

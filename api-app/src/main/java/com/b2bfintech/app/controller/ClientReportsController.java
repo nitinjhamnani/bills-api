@@ -28,7 +28,7 @@ public class ClientReportsController {
     /** Every bill payment cycle created in the window, any status - the client's bill statement. */
     @GetMapping("/bill-statement")
     public List<BillDtos.BillPaymentDto> billStatement(
-            @PathVariable UUID clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
@@ -38,7 +38,7 @@ public class ClientReportsController {
     /** Bills fetched but not yet paid by the client - no date range, this is a point-in-time list. */
     @GetMapping("/outstanding-bills")
     public List<BillDtos.BillPaymentDto> outstandingBills(
-            @PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+            @PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return reports.outstandingBills(clientId);
     }
@@ -46,7 +46,7 @@ public class ClientReportsController {
     /** Wallet ledger for the window, with opening/closing balance and credit/debit totals. */
     @GetMapping("/wallet-statement")
     public ReportDtos.WalletStatementDto walletStatement(
-            @PathVariable UUID clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
@@ -56,7 +56,7 @@ public class ClientReportsController {
     /** Cycles the client actually paid in the window (by clientPaidAt). */
     @GetMapping("/payment-history")
     public List<BillDtos.BillPaymentDto> paymentHistory(
-            @PathVariable UUID clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
@@ -66,7 +66,7 @@ public class ClientReportsController {
     /** Paid amount grouped by bill service in the window. */
     @GetMapping("/spend-by-service")
     public List<ReportDtos.SpendByServiceRowDto> spendByService(
-            @PathVariable UUID clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
@@ -76,7 +76,7 @@ public class ClientReportsController {
     /** This client's top-up requests in the window. */
     @GetMapping("/top-ups")
     public List<ReportDtos.FundingRowDto> topUps(
-            @PathVariable UUID clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);

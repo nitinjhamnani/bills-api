@@ -21,7 +21,7 @@ public class BillActivityLogService {
         this.appUserRepository = appUserRepository;
     }
 
-    public void log(UUID billId, UUID billPaymentId, BillPaymentLog.EventType eventType, String description, String actor) {
+    public void log(String billId, UUID billPaymentId, BillPaymentLog.EventType eventType, String description, String actor) {
         String signature = sign(actor);
         String text = description;
         if (text != null && actor != null && signature != null && !actor.equals(signature)) {
@@ -44,7 +44,7 @@ public class BillActivityLogService {
         return appUserRepository.findByPhoneNumber(actor).map(user -> user.getUserCode()).orElse(actor);
     }
 
-    public List<BillPaymentLog> listForBill(UUID billId) {
+    public List<BillPaymentLog> listForBill(String billId) {
         return repository.findByBillIdOrderByCreatedAtDesc(billId);
     }
 

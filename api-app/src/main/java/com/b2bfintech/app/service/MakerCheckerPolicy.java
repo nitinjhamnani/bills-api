@@ -1,6 +1,8 @@
 package com.b2bfintech.app.service;
 
 import com.b2bfintech.billing.entity.BillPayment;
+import com.b2bfintech.billing.entity.BillPaymentLog;
+import com.b2bfintech.billing.repository.BillPaymentLogRepository;
 import com.b2bfintech.common.security.AuthenticatedUser;
 import com.b2bfintech.organisation.entity.ApprovalRule;
 import com.b2bfintech.organisation.service.ApprovalRuleService;
@@ -22,9 +24,20 @@ public class MakerCheckerPolicy {
     private static final Set<String> MONEY_ROLES = Set.of("ORGANISATION_ADMIN", "MAKER", "CHECKER");
 
     private final ApprovalRuleService approvalRuleService;
+    private final BillPaymentLogRepository logRepository;
 
-    public MakerCheckerPolicy(ApprovalRuleService approvalRuleService) {
+    public MakerCheckerPolicy(ApprovalRuleService approvalRuleService, BillPaymentLogRepository logRepository) {
         this.approvalRuleService = approvalRuleService;
+        this.logRepository = logRepository;
+    }
+
+    /** Who last picked this bill up, from the activity log. */
+    private String pickedUpBy(BillPayment payment) {
+        return logRepository.findByBillPaymentIdOrderByCreatedAtDesc(payment.getId()).stream()
+                .filter(entry -> entry.getEventType() == BillPaymentLog.EventType.ORG_PICKED_UP)
+                .map(BillPaymentLog::getActor)
+                .findFirst()
+                .orElse(null);
     }
 
     public boolean requiresApproval(ApprovalRule.ActionType actionType, BigDecimal amount) {
@@ -56,7 +69,7 @@ public class MakerCheckerPolicy {
         if (!"CHECKER".equals(user.role())) {
             return false;
         }
-        String picker = payment.getOrgPickedUpBy();
+        String picker = pickedUpBy(payment);
         return picker == null || !picker.equals(user.phoneNumber());
     }
 
@@ -64,7 +77,7 @@ public class MakerCheckerPolicy {
         if (canSettleBill(user, payment)) {
             return;
         }
-        if (user != null && user.phoneNumber() != null && user.phoneNumber().equals(payment.getOrgPickedUpBy())
+        if (user != null && user.phoneNumber() != null && user.phoneNumber().equals(pickedUpBy(payment))
                 && requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, payment.getAmount())) {
             throw new AccessDeniedException("The person who picked up this bill cannot also settle it");
         }

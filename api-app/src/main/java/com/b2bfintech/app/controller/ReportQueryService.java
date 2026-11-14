@@ -8,10 +8,10 @@ import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.app.service.CategoryLabels;
 import com.b2bfintech.wallet.entity.LedgerEntry;
 import com.b2bfintech.wallet.entity.WalletAccount;
-import com.b2bfintech.wallet.entity.WalletTopupRequest;
+import com.b2bfintech.wallet.entity.WalletTransactionRequest;
 import com.b2bfintech.wallet.repository.LedgerEntryRepository;
 import com.b2bfintech.wallet.repository.WalletAccountRepository;
-import com.b2bfintech.wallet.repository.WalletTopupRequestRepository;
+import com.b2bfintech.wallet.repository.WalletTransactionRequestRepository;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -43,16 +43,19 @@ public class ReportQueryService {
     private final ClientRepository clientRepository;
     private final WalletAccountRepository walletAccountRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
-    private final WalletTopupRequestRepository walletTopupRequestRepository;
+    private final WalletTransactionRequestRepository walletTopupRequestRepository;
+    private final com.b2bfintech.billing.repository.BillFetchRepository billFetchRepository;
 
     public ReportQueryService(
+            com.b2bfintech.billing.repository.BillFetchRepository billFetchRepository,
             BillPaymentRepository billPaymentRepository,
             BillRepository billRepository,
             CategoryLabels categoryLabels,
             ClientRepository clientRepository,
             WalletAccountRepository walletAccountRepository,
             LedgerEntryRepository ledgerEntryRepository,
-            WalletTopupRequestRepository walletTopupRequestRepository) {
+            WalletTransactionRequestRepository walletTopupRequestRepository) {
+        this.billFetchRepository = billFetchRepository;
         this.billPaymentRepository = billPaymentRepository;
         this.billRepository = billRepository;
         this.categoryLabels = categoryLabels;
@@ -62,7 +65,7 @@ public class ReportQueryService {
         this.walletTopupRequestRepository = walletTopupRequestRepository;
     }
 
-    public ReportDtos.WalletStatementDto walletStatement(UUID clientId, Instant from, Instant to) {
+    public ReportDtos.WalletStatementDto walletStatement(String clientId, Instant from, Instant to) {
         Client client = clientRepository.findById(clientId).orElse(null);
         if (client != null && client.getClientType() == Client.ClientType.VENDOR) {
             throw new com.b2bfintech.common.exception.BadRequestException("A vendor does not have a wallet");
@@ -74,10 +77,7 @@ public class ReportQueryService {
             return new ReportDtos.WalletStatementDto(
                     BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, List.of());
         }
-        BigDecimal opening = ledgerEntryRepository
-                .findTopByWalletAccountIdAndCreatedAtBeforeOrderByCreatedAtDesc(account.getId(), from)
-                .map(LedgerEntry::getBalanceAfter)
-                .orElse(BigDecimal.ZERO);
+        BigDecimal opening = ledgerEntryRepository.balanceBefore(account.getId(), from);
         List<LedgerEntry> entries = ledgerEntryRepository
                 .findByWalletAccountIdAndCreatedAtBetweenOrderByCreatedAtAsc(account.getId(), from, to);
         BigDecimal totalCredits = entries.stream()
@@ -86,34 +86,35 @@ public class ReportQueryService {
         BigDecimal totalDebits = entries.stream()
                 .filter(e -> e.getEntryType() == LedgerEntry.EntryType.DEBIT)
                 .map(LedgerEntry::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal closing = entries.isEmpty() ? opening : entries.get(entries.size() - 1).getBalanceAfter();
-        List<BillDtos.LedgerEntryDto> dtos = cap(entries).stream()
-                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
-                .map(BillDtos.LedgerEntryDto::from)
-                .toList();
+        BigDecimal closing = opening.add(totalCredits).subtract(totalDebits);
+        List<BillDtos.LedgerEntryDto> dtos = cap(BillDtos.LedgerEntryDto.withBalances(entries, opening));
         return new ReportDtos.WalletStatementDto(opening, closing, totalCredits, totalDebits, dtos);
     }
 
-    public List<BillDtos.BillPaymentDto> billPaymentsInRange(UUID clientId, Instant from, Instant to) {
+    public List<BillDtos.BillPaymentDto> billPaymentsInRange(String clientId, Instant from, Instant to) {
         return toPaymentDtos(cap(
                 billPaymentRepository.findByClientIdAndCreatedAtBetweenOrderByCreatedAtDesc(clientId, from, to)));
     }
 
-    public List<BillDtos.BillPaymentDto> outstandingBills(UUID clientId) {
-        return toPaymentDtos(cap(
-                billPaymentRepository.findByClientIdAndPaymentStatusOrderByCreatedAtDesc(
-                        clientId, Bill.PaymentStatus.PENDING)));
+    public List<BillDtos.BillPaymentDto> outstandingBills(String clientId) {
+        Function<String, String> names = categoryLabels.lookup();
+        return cap(billFetchRepository.findDues(clientId)).stream()
+                .map(fetch -> billRepository.findById(fetch.getBillId())
+                        .map(bill -> BillDtos.BillPaymentDto.fromDue(fetch, bill, names, null))
+                        .orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .toList();
     }
 
-    public List<BillDtos.BillPaymentDto> paymentHistory(UUID clientId, Instant from, Instant to) {
+    public List<BillDtos.BillPaymentDto> paymentHistory(String clientId, Instant from, Instant to) {
         return toPaymentDtos(cap(
                 billPaymentRepository.findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(clientId, from, to)));
     }
 
-    public List<ReportDtos.SpendByServiceRowDto> spendByService(UUID clientId, Instant from, Instant to) {
+    public List<ReportDtos.SpendByServiceRowDto> spendByService(String clientId, Instant from, Instant to) {
         List<BillPayment> paid = billPaymentRepository
                 .findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(clientId, from, to);
-        Map<UUID, Bill> bills = loadBills(paid);
+        Map<String, Bill> bills = loadBills(paid);
         Function<String, String> names = categoryLabels.lookup();
         Map<String, SpendAcc> byService = new LinkedHashMap<>();
         for (BillPayment payment : paid) {
@@ -129,20 +130,20 @@ public class ReportQueryService {
                 .toList();
     }
 
-    public List<ReportDtos.FundingRowDto> clientTopUps(UUID clientId, Instant from, Instant to) {
-        Map<UUID, Client> clients = clientsById();
-        return cap(walletTopupRequestRepository.findByClientIdAndCreatedAtBetweenOrderByCreatedAtDesc(clientId, from, to))
+    public List<ReportDtos.FundingRowDto> clientTopUps(String clientId, Instant from, Instant to) {
+        Map<String, Client> clients = clientsById();
+        return cap(walletTopupRequestRepository.findByCorpIdAndCreatedDateBetweenOrderByCreatedDateDesc(clientId, from, to))
                 .stream()
-                .map(r -> toFundingRow(r, clients.get(r.getClientId())))
+                .map(r -> toFundingRow(r, clients.get(r.getCorpId())))
                 .toList();
     }
 
     public List<ReportDtos.ClientPortfolioRowDto> clientPortfolio() {
-        Map<UUID, WalletAccount> wallets = walletAccountRepository.findByWalletType(WalletAccount.WalletType.WALLET)
+        Map<String, WalletAccount> wallets = walletAccountRepository.findByWalletType(WalletAccount.WalletType.WALLET)
                 .stream().collect(Collectors.toMap(WalletAccount::getClientId, w -> w, (a, b) -> a));
-        Map<UUID, Object[]> aggregates = new HashMap<>();
+        Map<String, Object[]> aggregates = new HashMap<>();
         for (Object[] row : billPaymentRepository.aggregatePortfolioByClient()) {
-            aggregates.put((UUID) row[0], row);
+            aggregates.put((String) row[0], row);
         }
         return clientRepository.findAll().stream()
                 .map(c -> {
@@ -162,7 +163,7 @@ public class ReportQueryService {
     }
 
     public List<BillDtos.BillPaymentDto> settlementPipeline(
-            Instant from, Instant to, UUID clientId, String dateField, String orgStatus) {
+            Instant from, Instant to, String clientId, String dateField, String orgStatus) {
         List<BillPayment> payments = switch (normalizeDateField(dateField)) {
             case "clientPaidAt" -> clientId != null
                     ? billPaymentRepository.findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(clientId, from, to)
@@ -178,17 +179,14 @@ public class ReportQueryService {
     }
 
     public List<ReportDtos.AgingRowDto> agingQueue() {
-        Map<UUID, Client> clients = clientsById();
+        Map<String, Client> clients = clientsById();
         List<BillPayment> stuck = billPaymentRepository.findByOrgStatusInOrderByCreatedAtDesc(STUCK_STATUSES);
-        Map<UUID, Bill> bills = loadBills(stuck);
+        Map<String, Bill> bills = loadBills(stuck);
         Instant now = Instant.now();
         List<ReportDtos.AgingRowDto> rows = new ArrayList<>();
         for (BillPayment payment : stuck) {
             Bill bill = bills.get(payment.getBillId());
-            Instant stuckSince = payment.getOrgStatus() == BillPayment.OrgStatus.IN_PROCESS
-                    && payment.getOrgPickedUpAt() != null
-                    ? payment.getOrgPickedUpAt()
-                    : payment.getClientPaidAt() != null ? payment.getClientPaidAt()
+            Instant stuckSince = payment.getClientPaidAt() != null ? payment.getClientPaidAt()
                     : payment.getUpdatedAt() != null ? payment.getUpdatedAt() : payment.getCreatedAt();
             if (stuckSince == null) stuckSince = now;
             long days = Math.max(0, Duration.between(stuckSince, now).toDays());
@@ -212,18 +210,18 @@ public class ReportQueryService {
     }
 
     public List<ReportDtos.ClientGmvRowDto> gmvByClient(Instant from, Instant to) {
-        Map<UUID, Client> clients = clientsById();
-        Map<UUID, long[]> paid = new HashMap<>();
-        Map<UUID, BigDecimal> paidAmt = new HashMap<>();
+        Map<String, Client> clients = clientsById();
+        Map<String, long[]> paid = new HashMap<>();
+        Map<String, BigDecimal> paidAmt = new HashMap<>();
         for (Object[] row : billPaymentRepository.sumClientPaidByClient(from, to)) {
-            UUID id = (UUID) row[0];
+            String id = (String) row[0];
             paid.put(id, new long[]{((Number) row[1]).longValue()});
             paidAmt.put(id, decimal(row[2]));
         }
-        Map<UUID, long[]> settled = new HashMap<>();
-        Map<UUID, BigDecimal> settledAmt = new HashMap<>();
+        Map<String, long[]> settled = new HashMap<>();
+        Map<String, BigDecimal> settledAmt = new HashMap<>();
         for (Object[] row : billPaymentRepository.sumOrgSettledByClient(from, to)) {
-            UUID id = (UUID) row[0];
+            String id = (String) row[0];
             settled.put(id, new long[]{((Number) row[1]).longValue()});
             settledAmt.put(id, decimal(row[2]));
         }
@@ -238,24 +236,12 @@ public class ReportQueryService {
                 .toList();
     }
 
-    public List<ReportDtos.RevenueRowDto> revenue(Instant from, Instant to, UUID clientId) {
-        Map<UUID, Client> clients = clientsById();
-        return cap(ledgerEntryRepository
-                .findByReferenceTypeAndCreatedAtBetween(LedgerEntry.ReferenceType.FEE, from, to)
-                .stream()
-                .filter(e -> clientId == null || clientId.equals(e.getWalletAccount().getClientId()))
-                .map(e -> {
-                    Client c = clients.get(e.getWalletAccount().getClientId());
-                    return new ReportDtos.RevenueRowDto(
-                            e.getWalletAccount().getClientId().toString(),
-                            c != null ? c.getClientName() : "Unknown client",
-                            c != null ? c.getClientCode() : null,
-                            e.getAmount(), e.getDescription(), e.getCreatedAt());
-                })
-                .toList());
+    /** Fee debits are stored under the bill's category, so they cannot be told apart from bill debits. */
+    public List<ReportDtos.RevenueRowDto> revenue(Instant from, Instant to, String clientId) {
+        return List.of();
     }
 
-    public List<ReportDtos.RevenueByClientRowDto> revenueByClient(Instant from, Instant to, UUID clientId) {
+    public List<ReportDtos.RevenueByClientRowDto> revenueByClient(Instant from, Instant to, String clientId) {
         Map<String, ReportDtos.RevenueByClientRowDto> grouped = new LinkedHashMap<>();
         for (ReportDtos.RevenueRowDto row : revenue(from, to, clientId)) {
             ReportDtos.RevenueByClientRowDto existing = grouped.get(row.clientId());
@@ -271,37 +257,24 @@ public class ReportQueryService {
         return List.copyOf(grouped.values());
     }
 
-    public List<ReportDtos.FundingRowDto> funding(Instant from, Instant to, UUID clientId, String status) {
-        Map<UUID, Client> clients = clientsById();
-        return cap(walletTopupRequestRepository.findByCreatedAtBetweenOrderByCreatedAtDesc(from, to)
+    public List<ReportDtos.FundingRowDto> funding(Instant from, Instant to, String clientId, String status) {
+        Map<String, Client> clients = clientsById();
+        return cap(walletTopupRequestRepository.findByCreatedDateBetweenOrderByCreatedDateDesc(from, to)
                 .stream()
-                .filter(r -> clientId == null || clientId.equals(r.getClientId()))
+                .filter(r -> clientId == null || clientId.equals(r.getCorpId()))
                 .filter(r -> status == null || status.isBlank() || r.getStatus().name().equalsIgnoreCase(status))
-                .map(r -> toFundingRow(r, clients.get(r.getClientId())))
+                .map(r -> toFundingRow(r, clients.get(r.getCorpId())))
                 .toList());
     }
 
-    public List<ReportDtos.AdjustmentRowDto> fundingAdjustments(Instant from, Instant to, UUID clientId) {
-        Map<UUID, Client> clients = clientsById();
-        return cap(ledgerEntryRepository
-                .findByReferenceTypeAndCreatedAtBetween(LedgerEntry.ReferenceType.ADJUSTMENT, from, to)
-                .stream()
-                .filter(e -> e.getEntryType() == LedgerEntry.EntryType.CREDIT)
-                .filter(e -> clientId == null || clientId.equals(e.getWalletAccount().getClientId()))
-                .map(e -> {
-                    Client c = clients.get(e.getWalletAccount().getClientId());
-                    return new ReportDtos.AdjustmentRowDto(
-                            e.getWalletAccount().getClientId().toString(),
-                            c != null ? c.getClientName() : "Unknown client",
-                            c != null ? c.getClientCode() : null,
-                            e.getAmount(), e.getDescription(), e.getCreatedAt());
-                })
-                .toList());
+    /** Paytrix manual credits are stored as RECHARGE, like approved top-ups, so they cannot be listed apart. */
+    public List<ReportDtos.AdjustmentRowDto> fundingAdjustments(Instant from, Instant to, String clientId) {
+        return List.of();
     }
 
     private List<BillDtos.BillPaymentDto> toPaymentDtos(List<BillPayment> payments) {
         Function<String, String> names = categoryLabels.lookup();
-        Map<UUID, Bill> bills = loadBills(payments);
+        Map<String, Bill> bills = loadBills(payments);
         List<BillDtos.BillPaymentDto> dtos = new ArrayList<>();
         for (BillPayment payment : payments) {
             Bill bill = bills.get(payment.getBillId());
@@ -311,13 +284,13 @@ public class ReportQueryService {
         return dtos;
     }
 
-    private Map<UUID, Bill> loadBills(List<BillPayment> payments) {
-        Set<UUID> ids = payments.stream().map(BillPayment::getBillId).collect(Collectors.toSet());
+    private Map<String, Bill> loadBills(List<BillPayment> payments) {
+        Set<String> ids = payments.stream().map(BillPayment::getBillId).collect(Collectors.toSet());
         if (ids.isEmpty()) return Map.of();
         return billRepository.findAllById(ids).stream().collect(Collectors.toMap(Bill::getId, b -> b));
     }
 
-    private Map<UUID, Client> clientsById() {
+    private Map<String, Client> clientsById() {
         return clientRepository.findAll().stream().collect(Collectors.toMap(Client::getId, c -> c));
     }
 
@@ -337,14 +310,14 @@ public class ReportQueryService {
         };
     }
 
-    private static ReportDtos.FundingRowDto toFundingRow(WalletTopupRequest r, Client c) {
+    private static ReportDtos.FundingRowDto toFundingRow(WalletTransactionRequest r, Client c) {
         return new ReportDtos.FundingRowDto(
-                r.getId().toString(), r.getClientId().toString(),
+                r.getRequestId().toString(), r.getCorpId(),
                 c != null ? c.getClientName() : "Unknown client",
                 c != null ? c.getClientCode() : null,
-                r.getAmount(), r.getPaymentMode().name(), r.getStatus().name(),
-                r.getPaymentReference(), r.getRequestedBy(), r.getReviewedBy(),
-                r.getCreatedAt(), r.getUpdatedAt());
+                r.getAmount(), r.getMode().name(), r.getStatus().name(),
+                r.getUtr(), r.getCreatedBy(), r.getApprovedBy(),
+                r.getCreatedDate(), r.getLastUpdated());
     }
 
     private static BigDecimal decimal(Object value) {

@@ -42,21 +42,21 @@ public class OnboardingController {
 
     @PostMapping("/api/v1/paytrix/onboarding/{clientId}/kyc-complete")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public OnboardingRow markKyc(@PathVariable UUID clientId) {
+    public OnboardingRow markKyc(@PathVariable String clientId) {
         onboardingService.markKycComplete(clientId);
         return row(clientId);
     }
 
     @PostMapping("/api/v1/paytrix/onboarding/{clientId}/contract-signed")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public OnboardingRow markContract(@PathVariable UUID clientId) {
+    public OnboardingRow markContract(@PathVariable String clientId) {
         onboardingService.markContractSigned(clientId);
         return row(clientId);
     }
 
     @PostMapping("/api/v1/paytrix/onboarding/{clientId}/activate")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public OnboardingRow activate(@PathVariable UUID clientId) {
+    public OnboardingRow activate(@PathVariable String clientId) {
         onboardingService.activate(clientId);
         return row(clientId);
     }
@@ -70,7 +70,7 @@ public class OnboardingController {
     @PostMapping("/api/v1/client/onboarding/kyc-complete")
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
     public OnboardingRow completeKyc(@AuthenticationPrincipal AuthenticatedUser principal) {
-        UUID clientId = requiredClient(principal);
+        String clientId = requiredClient(principal);
         onboardingService.markKycComplete(clientId);
         return row(clientId);
     }
@@ -78,7 +78,7 @@ public class OnboardingController {
     @PostMapping("/api/v1/client/onboarding/contract-signed")
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
     public OnboardingRow signContract(@AuthenticationPrincipal AuthenticatedUser principal) {
-        UUID clientId = requiredClient(principal);
+        String clientId = requiredClient(principal);
         onboardingService.markContractSigned(clientId);
         return row(clientId);
     }
@@ -86,21 +86,21 @@ public class OnboardingController {
     @PutMapping("/api/v1/client/onboarding")
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
     public OnboardingRow submit(@AuthenticationPrincipal AuthenticatedUser principal, @Valid @RequestBody DetailsRequest request) {
-        UUID clientId = requiredClient(principal);
+        String clientId = requiredClient(principal);
         onboardingService.submitDetails(
                 clientId, request.legalName(), request.registrationNumber(), request.registeredAddress(), request.signingAuthority());
         return row(clientId);
     }
 
-    private OnboardingRow row(UUID clientId) {
+    private OnboardingRow row(String clientId) {
         return OnboardingRow.from(clientService.getById(clientId), onboardingService.get(clientId));
     }
 
-    private static UUID requiredClient(AuthenticatedUser principal) {
+    private static String requiredClient(AuthenticatedUser principal) {
         if (principal.clientId() == null || principal.clientId().isBlank()) {
             throw new BadRequestException("This login is not a client account");
         }
-        return UUID.fromString(principal.clientId());
+        return principal.clientId();
     }
 
     public record DetailsRequest(
@@ -113,7 +113,7 @@ public class OnboardingController {
     public record OnboardingRow(
             String clientId, String clientName, String clientCode, String clientType, String corporateKind, String status,
             String legalName, String registrationNumber, String registeredAddress, String signingAuthority,
-            Instant detailsSubmittedAt, String kycStatus, String contractStatus) {
+            boolean detailsSubmitted, String kycStatus, String contractStatus) {
 
         static OnboardingRow from(Client client, ClientOnboarding onboarding) {
             return new OnboardingRow(
@@ -122,7 +122,7 @@ public class OnboardingController {
                     client.getCorporateKind() == null ? null : client.getCorporateKind().name(),
                     client.getStatus().name(),
                     onboarding.getLegalName(), onboarding.getRegistrationNumber(), onboarding.getRegisteredAddress(),
-                    onboarding.getSigningAuthority(), onboarding.getDetailsSubmittedAt(),
+                    onboarding.getSigningAuthority(), onboarding.isDetailsSubmitted(),
                     onboarding.getKycStatus().name(), onboarding.getContractStatus().name());
         }
     }

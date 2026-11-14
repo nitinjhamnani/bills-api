@@ -13,7 +13,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
 @Service
 public class ClientService {
@@ -26,9 +25,9 @@ public class ClientService {
         this.appUserRepository = appUserRepository;
     }
 
-    /** New clients start with every category disabled. The organisation enables them per client. */
+    /** A new corporate or vendor stays inactive until onboarding finishes. */
     @Transactional
-    public Client create(String clientName, String contactPhone, Client.ClientType clientType,
+    public Client create(String clientName, String contactPhone, String email, Client.ClientType clientType,
                           Client.CorporateKind corporateKind) {
         if (clientType == Client.ClientType.VENDOR) {
             if (corporateKind != null) {
@@ -38,12 +37,16 @@ public class ClientService {
             throw new BadRequestException("Choose individual or company");
         }
         Client client = new Client();
+        client.setId(generateUniqueClientCode(clientName, clientType));
         client.setClientName(clientName);
-        client.setClientCode(generateUniqueClientCode(clientName, clientType));
         client.setContactPhone(contactPhone);
+        client.setEmail(blankToNull(email));
         client.setClientType(clientType);
-        client.setCorporateKind(corporateKind);
-        client.setStatus(Client.ClientStatus.PENDING);
+        client.setCorporateKind(clientType == Client.ClientType.VENDOR ? null : corporateKind);
+        client.setActive(false);
+        client.setOnboardingStatus("NOT_STARTED");
+        client.setAgreementStatus("NOT_STARTED");
+        client.setAgreementSigned(false);
         return clientRepository.save(client);
     }
 
@@ -51,38 +54,43 @@ public class ClientService {
         return clientRepository.findAll();
     }
 
-    public Client getById(UUID id) {
-        return clientRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Client not found"));
+    public Client getById(String id) {
+        return find(id).orElseThrow(() -> new ResourceNotFoundException("Client not found"));
     }
 
-    public Optional<Client> find(UUID id) {
+    public Optional<Client> find(String id) {
         return clientRepository.findById(id);
     }
 
-    public Client setStatus(UUID id, Client.ClientStatus status) {
+    @Transactional
+    public Client save(Client client) {
+        return clientRepository.save(client);
+    }
+
+    public Client setStatus(String id, Client.ClientStatus status) {
         Client client = getById(id);
         client.setStatus(status);
         return clientRepository.save(client);
     }
 
-    public boolean hasSalesAssignments(UUID salesUserId) {
+    public boolean hasSalesAssignments(String salesUserId) {
         return clientRepository.existsBySalesUserId(salesUserId);
     }
 
-    public List<Client> listForSalesPerson(UUID salesUserId) {
+    public List<Client> listForSalesPerson(String salesUserId) {
         return clientRepository.findBySalesUserIdOrderByClientNameAsc(salesUserId);
     }
 
-    public List<Client> findByIds(Collection<UUID> ids) {
+    public List<Client> findByIds(Collection<String> ids) {
         if (ids == null || ids.isEmpty()) {
             return List.of();
         }
-        return clientRepository.findAllById(ids);
+        return ids.stream().map(clientRepository::findById).flatMap(Optional::stream).toList();
     }
 
     /** A corporate has at most one sales person. Vendors are never linked. Passing null clears the link. */
     @Transactional
-    public Client assignSalesPerson(UUID clientId, UUID salesUserId) {
+    public Client assignSalesPerson(String clientId, String salesUserId) {
         Client client = getById(clientId);
         if (client.getClientType() != Client.ClientType.CORPORATE) {
             throw new BadRequestException("A sales person is only assigned to a corporate");
@@ -93,18 +101,14 @@ public class ClientService {
         }
         AppUser user = appUserRepository.findById(salesUserId)
                 .orElseThrow(() -> new BadRequestException("Choose an active sales person"));
-        if (!"SALES".equals(user.getRole().getName())
-                || user.getStatus() != AppUser.UserStatus.ACTIVE
-                || user.getClient() != null) {
+        if (!user.hasUserType(AppUser.UserType.ORG_SALES) || !user.isActive() || !user.isPaytrix()) {
             throw new BadRequestException("Choose an active sales person");
         }
         client.setSalesUserId(salesUserId);
         return clientRepository.save(client);
     }
 
-    /** Generates an 8-character client code (see {@link ClientCodeGenerator}), retrying on the rare
-     * random collision until a free one is found. Corporates use {@code CO}, vendors use {@code VD}.
-     * Shared with {@link #create} and the startup backfill for clients onboarded before this field existed. */
+    /** Corporates use {@code CO}. Vendors use {@code VD}. Both ids are 8 characters. */
     public String generateUniqueClientCode(String clientName, Client.ClientType clientType) {
         String prefix = clientType == Client.ClientType.VENDOR
                 ? ClientCodeGenerator.VENDOR_PREFIX
@@ -115,6 +119,17 @@ public class ClientService {
             code = ClientCodeGenerator.generate(clientName, prefix);
             attempts++;
         } while (clientRepository.existsByClientCode(code) && attempts < 20);
+        if (clientRepository.existsByClientCode(code)) {
+            throw new BadRequestException("Could not assign a client id");
+        }
         return code;
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

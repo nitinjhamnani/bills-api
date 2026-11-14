@@ -1,5 +1,6 @@
 package com.b2bfintech.platform.controller;
 
+import com.b2bfintech.organisation.entity.AppUser;
 import com.b2bfintech.platform.dto.LoginResponseDto;
 import com.b2bfintech.platform.dto.PasswordLoginDto;
 import com.b2bfintech.platform.service.AuthService;
@@ -46,15 +47,14 @@ public class AuthController {
     }
 
     private LoginResponseDto toResponse(AuthService.LoginResult result) {
-        var user = result.user();
+        AppUser user = result.user();
         return new LoginResponseDto(
                 result.accessToken(),
                 "Bearer",
                 result.expiresInSeconds(),
                 new LoginResponseDto.UserProfileDto(
-                        user.userId().toString(), user.phoneNumber(), user.userCode(), user.displayName(), user.role(), user.tenantSchema(),
-                        user.clientId() == null ? null : user.clientId().toString(),
-                        user.branchId() == null ? null : user.branchId().toString())
+                        user.getUserId(), user.getPhone(), user.getUserId(), user.getName(), result.role(), null,
+                        result.clientId(), result.branchId())
         );
     }
 

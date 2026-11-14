@@ -1,12 +1,14 @@
 package com.b2bfintech.app.controller;
 
 import com.b2bfintech.billing.entity.Bill;
+import com.b2bfintech.billing.entity.BillFetch;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.entity.BillPaymentLog;
 import com.b2bfintech.common.spi.BillingProvider;
 import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.wallet.entity.LedgerEntry;
+import com.b2bfintech.wallet.entity.WalletAccount;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -26,14 +28,14 @@ final class BillDtos {
     private BillDtos() {
     }
 
-    static Function<java.util.UUID, String> clientNameLookup(ClientRepository clientRepository) {
-        Map<java.util.UUID, String> names = clientRepository.findAll().stream()
+    static Function<String, String> clientNameLookup(ClientRepository clientRepository) {
+        Map<String, String> names = clientRepository.findAll().stream()
                 .collect(Collectors.toMap(Client::getId, Client::getClientName, (a, b) -> a));
         return id -> names.getOrDefault(id, "Unknown client");
     }
 
-    static Function<java.util.UUID, String> clientCodeLookup(ClientRepository clientRepository) {
-        Map<java.util.UUID, String> codes = clientRepository.findAll().stream()
+    static Function<String, String> clientCodeLookup(ClientRepository clientRepository) {
+        Map<String, String> codes = clientRepository.findAll().stream()
                 .collect(Collectors.toMap(Client::getId, c -> c.getClientCode() != null ? c.getClientCode() : "", (a, b) -> a));
         return id -> codes.getOrDefault(id, "");
     }
@@ -56,6 +58,30 @@ final class BillDtos {
     record AmountComponentDto(String label, BigDecimal amount) {
     }
 
+    /** One row of the corporate's My Payments: the bill_payment columns plus the bill it paid. */
+    record CorpPaymentDto(
+            String id, String billFetchId, String billId, String billerName, String categoryName,
+            String consumerNumber, String dueDate, String billCycle, String branchId, String branchName,
+            BigDecimal billAmount, Instant corpPaymentOn, String corpId, String corpName, String corpPaidUserId,
+            String corpPaymentStatus, String billAssignedTo, String billAssignedToId, String billAssignedToName,
+            String billAssignedToStatus, Instant billAssignedOn, Instant billPaidOn,
+            String transactionReferenceNumber, String bbpsExternalReference, String paymentProof,
+            String verifiedBy, String verifiedById, Instant verifiedOn, boolean isVerified) {
+
+        static CorpPaymentDto from(BillPayment p, Bill bill, Function<String, String> branchNameLookup) {
+            return new CorpPaymentDto(
+                    p.getId().toString(), p.getBillFetch().getBillFetchId().toString(), bill.getId(),
+                    bill.getOperatorName(), bill.getCategoryName(), bill.getPrimaryParamValue(),
+                    p.getDueDate(), p.getBillPeriod(), bill.getBranchId(),
+                    branchNameLookup == null ? null : branchNameLookup.apply(bill.getBranchId()),
+                    p.getBillAmount(), p.getCorpPaymentOn(), p.getCorpId(), p.getCorpName(), p.getCorpPaidUserId(),
+                    p.getCorpPaymentStatus().name(), p.getBillAssignedTo().name(), p.getBillAssignedToId(),
+                    p.getBillAssignedToName(), p.getBillAssignedToStatus().name(), p.getBillAssignedOn(),
+                    p.getBillPaidOn(), p.getTransactionReferenceNumber(), p.getBbpsExternalReference(),
+                    p.getPaymentProof(), p.getVerifiedBy(), p.getVerifiedById(), p.getVerifiedOn(), p.isVerified());
+        }
+    }
+
     record BulkRowResult(int row, boolean success, String billId, String error) {
     }
 
@@ -65,12 +91,25 @@ final class BillDtos {
         }
     }
 
+    /** {@code balanceAfter} and {@code description} are worked out when read. Neither is stored. */
     record LedgerEntryDto(String walletType, String entryType, BigDecimal amount, BigDecimal balanceAfter,
-                           String referenceType, String description, Instant createdAt) {
-        static LedgerEntryDto from(LedgerEntry e) {
+                           String category, String description, String createdBy, Instant createdAt) {
+        static LedgerEntryDto from(LedgerEntry e, BigDecimal balanceAfter) {
             return new LedgerEntryDto(
-                    e.getWalletAccount().getWalletType().name(), e.getEntryType().name(), e.getAmount(),
-                    e.getBalanceAfter(), e.getReferenceType().name(), e.getDescription(), e.getCreatedAt());
+                    WalletAccount.WalletType.WALLET.name(), e.getEntryType().name(), e.getAmount(),
+                    balanceAfter, e.getCategory(), e.describe(), e.getCreatedBy(), e.getCreatedAt());
+        }
+
+        /** {@code oldestFirst} with the balance before the first one. Returned newest first. */
+        static List<LedgerEntryDto> withBalances(List<LedgerEntry> oldestFirst, BigDecimal opening) {
+            List<LedgerEntryDto> rows = new java.util.ArrayList<>(oldestFirst.size());
+            BigDecimal running = opening;
+            for (LedgerEntry entry : oldestFirst) {
+                running = running.add(entry.signedAmount());
+                rows.add(from(entry, running));
+            }
+            java.util.Collections.reverse(rows);
+            return rows;
         }
     }
 
@@ -94,15 +133,15 @@ final class BillDtos {
         }
 
         static ManagedBillDto from(Bill b, Function<String, String> serviceNameLookup,
-                                    Function<java.util.UUID, String> clientNameLookup,
-                                    Function<java.util.UUID, String> clientCodeLookup) {
+                                    Function<String, String> clientNameLookup,
+                                    Function<String, String> clientCodeLookup) {
             return from(b, serviceNameLookup, clientNameLookup, clientCodeLookup, null);
         }
 
         static ManagedBillDto from(Bill b, Function<String, String> serviceNameLookup,
-                                    Function<java.util.UUID, String> clientNameLookup,
-                                    Function<java.util.UUID, String> clientCodeLookup,
-                                    Function<java.util.UUID, String> branchNameLookup) {
+                                    Function<String, String> clientNameLookup,
+                                    Function<String, String> clientCodeLookup,
+                                    Function<String, String> branchNameLookup) {
             return new ManagedBillDto(
                     b.getId().toString(), b.getClientId().toString(),
                     clientNameLookup != null ? clientNameLookup.apply(b.getClientId()) : null,
@@ -116,7 +155,7 @@ final class BillDtos {
                     b.getLastFetchAt(), b.isLastFetchFailed(), b.getLastFetchFailureReason(),
                     b.isAutoFetchEnabled(), b.isAutoPayEnabled(),
                     b.getCreatedAt(), b.getUpdatedAt(),
-                    b.getBranchId() == null ? null : b.getBranchId().toString(),
+                    b.getBranchId(),
                     branchNameLookup == null || b.getBranchId() == null ? null : branchNameLookup.apply(b.getBranchId()));
         }
     }
@@ -138,7 +177,7 @@ final class BillDtos {
             String vendorStage, Instant bbpsVerifiedAt, String bbpsCheckNote, Instant reimbursedAt,
             Instant createdAt, Instant updatedAt,
             boolean awaitingChecker, boolean canSettle,
-            String branchId, String branchName) {
+            String branchId, String branchName, boolean hasPaymentProof, String corporateName) {
 
         static BillPaymentDto from(BillPayment p, Bill bill, Function<String, String> serviceNameLookup) {
             return from(p, bill, serviceNameLookup, false, false, null);
@@ -151,14 +190,52 @@ final class BillDtos {
 
         static BillPaymentDto from(BillPayment p, Bill bill, Function<String, String> serviceNameLookup,
                                    boolean awaitingChecker, boolean canSettle,
-                                   Function<java.util.UUID, String> vendorNameLookup) {
-            return from(p, bill, serviceNameLookup, awaitingChecker, canSettle, vendorNameLookup,
-                    p.getCommissionPercent(), p.getCommissionAmount());
+                                   Function<String, String> vendorNameLookup) {
+            return from(p, bill, serviceNameLookup, awaitingChecker, canSettle, vendorNameLookup, null, null);
+        }
+
+        /** The same row with the date Paytrix paid the vendor for this bill. */
+        BillPaymentDto withReimbursedAt(Instant paidToVendorAt) {
+            return new BillPaymentDto(
+                    id, billId, clientId, billServiceCode, billServiceName, billerName, billerId,
+                    customerBillAccountNumber, customerName, customerMobileNumber, amount, amountBreakdown,
+                    billNumber, billDate, dueDate, billPeriod, orgStatus, paymentStatus, billStatus,
+                    clientPaidAt, clientPaidBy, orgPickedUpAt, orgPickedUpBy, orgPaidAt, orgPaidBy,
+                    bbpsTransactionId, externalTransactionId, billType, billPayFailureReason,
+                    assignedVendorClientId, assignedVendorName, commissionPercent, commissionAmount,
+                    vendorMarkedPaidAt, vendorPaymentReference, vendorStage, bbpsVerifiedAt, bbpsCheckNote,
+                    paidToVendorAt, createdAt, updatedAt, awaitingChecker, canSettle, branchId, branchName,
+                    hasPaymentProof, corporateName);
+        }
+
+        /** A due fetch the corporate has not paid yet. The id is the bill fetch id. */
+        static BillPaymentDto fromDue(BillFetch f, Bill bill, Function<String, String> serviceNameLookup,
+                                      Function<String, String> branchNameLookup) {
+            return new BillPaymentDto(
+                    f.getBillFetchId().toString(), bill.getId(), bill.getClientId(), bill.getBillServiceCode(),
+                    serviceNameLookup.apply(bill.getBillServiceCode()),
+                    bill.getBillerName() != null ? bill.getBillerName() : serviceNameLookup.apply(bill.getBillServiceCode()),
+                    bill.getBillerId(), bill.getCustomerBillAccountNumber(), f.getBillConsumerName(), null,
+                    f.getBillAmount(), List.of(),
+                    null,
+                    f.getBillGeneratedDate() == null ? null : f.getBillGeneratedDate().toString(),
+                    f.getBillDueDate() == null ? null : f.getBillDueDate().toString(),
+                    f.getBillCycle(),
+                    "NA", "PENDING", f.getBillStatus().name(),
+                    null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null,
+                    null, null,
+                    null, null, null, null,
+                    f.getFetchedOn(), f.getFetchedOn(),
+                    false, false,
+                    bill.getBranchId(),
+                    branchNameLookup == null || bill.getBranchId() == null ? null : branchNameLookup.apply(bill.getBranchId()),
+                    false, null);
         }
 
         static BillPaymentDto from(BillPayment p, Bill bill, Function<String, String> serviceNameLookup,
                                    boolean awaitingChecker, boolean canSettle,
-                                   Function<java.util.UUID, String> vendorNameLookup,
+                                   Function<String, String> vendorNameLookup,
                                    BigDecimal commissionPercent, BigDecimal commissionAmount) {
             return from(p, bill, serviceNameLookup, awaitingChecker, canSettle, vendorNameLookup,
                     commissionPercent, commissionAmount, null);
@@ -166,33 +243,36 @@ final class BillDtos {
 
         static BillPaymentDto from(BillPayment p, Bill bill, Function<String, String> serviceNameLookup,
                                    boolean awaitingChecker, boolean canSettle,
-                                   Function<java.util.UUID, String> vendorNameLookup,
+                                   Function<String, String> vendorNameLookup,
                                    BigDecimal commissionPercent, BigDecimal commissionAmount,
-                                   Function<java.util.UUID, String> branchNameLookup) {
+                                   Function<String, String> branchNameLookup) {
             String vendorName = null;
-            if (p.getAssignedVendorClientId() != null && vendorNameLookup != null) {
-                vendorName = vendorNameLookup.apply(p.getAssignedVendorClientId());
+            if (p.isWithVendor()) {
+                vendorName = vendorNameLookup != null ? vendorNameLookup.apply(p.getBillAssignedToId()) : p.getBillAssignedToName();
             }
             return new BillPaymentDto(
-                    p.getId().toString(), p.getBillId().toString(), bill.getClientId().toString(), bill.getBillServiceCode(),
+                    p.getId().toString(), p.getBillId(), p.getCorpId(), bill.getBillServiceCode(),
                     serviceNameLookup.apply(bill.getBillServiceCode()),
                     bill.getBillerName() != null ? bill.getBillerName() : serviceNameLookup.apply(bill.getBillServiceCode()),
-                    bill.getBillerId(), bill.getCustomerBillAccountNumber(), bill.getCustomerName(), bill.getCustomerMobileNumber(),
-                    p.getAmount(), parseAmountBreakdown(p.getAmountBreakdown()),
-                    p.getBillNumber(), p.getBillDate(), p.getDueDate(), p.getBillPeriod(),
+                    bill.getBillerId(), bill.getCustomerBillAccountNumber(),
+                    p.getBillFetch().getBillConsumerName(), null,
+                    p.getBillAmount(), List.of(),
+                    null, p.getBillDate(), p.getDueDate(), p.getBillPeriod(),
                     p.getOrgStatus().name(), p.getPaymentStatus().name(), p.getBillStatus().name(),
-                    p.getClientPaidAt(), p.getClientPaidBy(), p.getOrgPickedUpAt(), p.getOrgPickedUpBy(),
-                    p.getOrgPaidAt(), p.getOrgPaidBy(), p.getBbpsTransactionId(), p.getExternalTransactionId(),
-                    p.getBillType(), p.getBillPayFailureReason(),
-                    p.getAssignedVendorClientId() == null ? null : p.getAssignedVendorClientId().toString(),
+                    p.getCorpPaymentOn(), p.getCorpPaidUserId(), null, null,
+                    p.getOrgPaidAt(), null, p.getBbpsTransactionId(), p.getExternalTransactionId(),
+                    null, null,
+                    p.getAssignedVendorClientId(),
                     vendorName, commissionPercent, commissionAmount,
                     p.getVendorMarkedPaidAt(), p.getVendorPaymentReference(),
                     p.getVendorStage() == null ? null : p.getVendorStage().name(),
-                    p.getBbpsVerifiedAt(), p.getBbpsCheckNote(), p.getReimbursedAt(),
+                    p.getVerifiedOn(), null, null,
                     p.getCreatedAt(), p.getUpdatedAt(),
                     awaitingChecker, canSettle,
-                    bill.getBranchId() == null ? null : bill.getBranchId().toString(),
-                    branchNameLookup == null || bill.getBranchId() == null ? null : branchNameLookup.apply(bill.getBranchId()));
+                    bill.getBranchId(),
+                    branchNameLookup == null || bill.getBranchId() == null ? null : branchNameLookup.apply(bill.getBranchId()),
+                    p.getPaymentProof() != null && !p.getPaymentProof().isBlank(),
+                    p.getCorpName());
         }
     }
 }

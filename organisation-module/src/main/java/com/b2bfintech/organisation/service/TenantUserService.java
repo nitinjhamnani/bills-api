@@ -2,58 +2,65 @@ package com.b2bfintech.organisation.service;
 
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
-import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.entity.AppUser;
-import com.b2bfintech.organisation.entity.Role;
+import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.organisation.entity.UserTypes;
 import com.b2bfintech.organisation.repository.AppUserRepository;
-import com.b2bfintech.organisation.repository.RoleRepository;
 import com.b2bfintech.organisation.util.UserCodeGenerator;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.UUID;
 
-/**
- * Reads/writes users within whichever tenant schema {@link com.b2bfintech.common.tenant.TenantContext}
- * currently points at. Callers (organisation provisioning, and later organisation-admin "manage users"
- * screens) are responsible for setting the tenant context before invoking this service.
- */
+/** Creates and reads people. A role name from the current screens is stored as a user type. */
 @Service
 public class TenantUserService {
 
     private final AppUserRepository appUserRepository;
-    private final RoleRepository roleRepository;
 
-    public TenantUserService(AppUserRepository appUserRepository, RoleRepository roleRepository) {
+    public TenantUserService(AppUserRepository appUserRepository) {
         this.appUserRepository = appUserRepository;
-        this.roleRepository = roleRepository;
     }
 
-    /** Creates an organisation-side user (no client) in the current tenant schema with the given role. */
     public AppUser createUser(String phoneNumber, String fullName, String roleName) {
-        return createUser(phoneNumber, fullName, roleName, null);
+        return createUser(phoneNumber, fullName, roleName, null, null, null);
     }
 
-    /** Creates a user, optionally attached to a client (CLIENT_ADMIN / CLIENT_OPERATOR). */
     public AppUser createUser(String phoneNumber, String fullName, String roleName, Client client) {
-        return createUser(phoneNumber, fullName, roleName, client, null);
+        return createUser(phoneNumber, fullName, roleName, client, null, null);
     }
 
-    /** Same as above, additionally recording an optional email (login is still resolved via platform.user_directory). */
     public AppUser createUser(String phoneNumber, String fullName, String roleName, Client client, String email) {
+        return createUser(phoneNumber, fullName, roleName, client, email, null);
+    }
+
+    public AppUser createUser(
+            String phoneNumber, String fullName, String roleName, Client client, String email, String passwordHash) {
         if (appUserRepository.findByPhoneNumber(phoneNumber).isPresent()) {
             throw new BadRequestException("A user with phone number " + phoneNumber + " already exists in this organisation");
         }
-        Role role = roleRepository.findByName(roleName)
-                .orElseThrow(() -> new ResourceNotFoundException("Role not found: " + roleName));
-
         AppUser user = new AppUser();
-        user.setPhoneNumber(phoneNumber);
-        user.setUserCode(generateUniqueUserCode());
-        user.setFullName(fullName);
+        user.setUserId(generateUniqueUserId());
+        user.setPhone(phoneNumber);
+        user.setName(fullName);
         user.setEmail(email);
-        user.setRole(role);
-        user.setClient(client);
+        user.setUserType(UserTypes.fromLegacyRole(roleName, client == null ? null : client.getClientType()));
+        user.setUserOrgId(UserTypes.organisationId(client));
+        user.setPassword(passwordHash == null ? "" : passwordHash);
+        user.setActive(true);
+        return appUserRepository.save(user);
+    }
+
+    /** The first Paytrix account. Later Paytrix admins are {@link AppUser.UserType#ORG_ADMIN}. */
+    public AppUser createSuperAdmin(String phoneNumber, String fullName, String passwordHash) {
+        AppUser user = new AppUser();
+        user.setUserId(generateUniqueUserId());
+        user.setPhone(phoneNumber);
+        user.setName(fullName);
+        user.setUserType(AppUser.UserType.ORG_SUPERADMIN);
+        user.setUserOrgId(AppUser.PAYTRIX);
+        user.setCreatedByType("ADMIN");
+        user.setPassword(passwordHash);
+        user.setActive(true);
         return appUserRepository.save(user);
     }
 
@@ -62,19 +69,16 @@ public class TenantUserService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found for phone number " + phoneNumber));
     }
 
-    public AppUser getById(UUID userId) {
+    public AppUser getById(String userId) {
         return appUserRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
     }
 
-    /** Updates name/email/role for an existing user. Phone number (the login identifier) is immutable here. */
-    public AppUser updateProfile(UUID userId, String fullName, String email, String roleName) {
+    public AppUser updateProfile(String userId, String fullName, String email, String roleName) {
         AppUser user = getById(userId);
-        Role role = roleRepository.findByName(roleName)
-                .orElseThrow(() -> new ResourceNotFoundException("Role not found: " + roleName));
-        user.setFullName(fullName);
+        user.setName(fullName);
         user.setEmail(email);
-        user.setRole(role);
+        user.setUserType(UserTypes.fromLegacyRole(roleName, clientType(user)));
         return appUserRepository.save(user);
     }
 
@@ -82,34 +86,48 @@ public class TenantUserService {
         return appUserRepository.findAll();
     }
 
-    public List<AppUser> listForClient(UUID clientId) {
-        return appUserRepository.findByClientId(clientId);
+    public List<AppUser> listForClient(String clientId) {
+        return appUserRepository.findByUserOrgId(clientId);
     }
 
-    public void suspend(UUID userId) {
-        AppUser user = appUserRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        user.setStatus(AppUser.UserStatus.SUSPENDED);
+    public void suspend(String userId) {
+        AppUser user = getById(userId);
+        user.setActive(false);
         appUserRepository.save(user);
     }
 
-    private String generateUniqueUserCode() {
+    public void reactivate(String userId) {
+        AppUser user = getById(userId);
+        user.setActive(true);
+        appUserRepository.save(user);
+    }
+
+    public void setPassword(String userId, String passwordHash) {
+        AppUser user = getById(userId);
+        user.setPassword(passwordHash);
+        appUserRepository.save(user);
+    }
+
+    private Client.ClientType clientType(AppUser user) {
+        if (user.hasUserType(AppUser.UserType.VENDOR_ADMIN) || user.hasUserType(AppUser.UserType.VENDOR_USER)) {
+            return Client.ClientType.VENDOR;
+        }
+        if (user.isPaytrix()) {
+            return null;
+        }
+        return Client.ClientType.CORPORATE;
+    }
+
+    private String generateUniqueUserId() {
         String code;
         int attempts = 0;
         do {
             code = UserCodeGenerator.generate();
             attempts++;
-        } while (appUserRepository.existsByUserCode(code) && attempts < 20);
-        if (appUserRepository.existsByUserCode(code)) {
+        } while (appUserRepository.existsById(code) && attempts < 20);
+        if (appUserRepository.existsById(code)) {
             throw new BadRequestException("Could not assign a user code");
         }
         return code;
-    }
-
-    public void reactivate(UUID userId) {
-        AppUser user = appUserRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        user.setStatus(AppUser.UserStatus.ACTIVE);
-        appUserRepository.save(user);
     }
 }

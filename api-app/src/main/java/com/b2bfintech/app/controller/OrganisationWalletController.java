@@ -62,14 +62,12 @@ public class OrganisationWalletController {
     /** Direct admin credit - org admin only, since this moves money with no counter-approval. */
     @PostMapping("/{clientId}/credit")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public ClientWalletDto addFunds(@PathVariable UUID clientId, @Valid @RequestBody AddFundsRequest request,
+    public ClientWalletDto addFunds(@PathVariable String clientId, @Valid @RequestBody AddFundsRequest request,
                                      @AuthenticationPrincipal AuthenticatedUser principal) {
         Client client = clientRepository.findById(clientId)
                 .orElseThrow(() -> new BadRequestException("Unknown client"));
         clientAccountGuard.requireWalletClient(clientId);
-        walletService.credit(clientId, WalletAccount.WalletType.WALLET, request.amount(),
-                LedgerEntry.ReferenceType.ADJUSTMENT, null, null,
-                "Manual credit by " + principal.phoneNumber() + ": " + request.note());
+        walletService.credit(clientId, request.amount(), LedgerEntry.RECHARGE, principal.userId());
         auditService.record("WALLET_MANUAL_CREDIT", "Client", clientId.toString(),
                 "credited " + request.amount() + " - " + request.note());
         return new ClientWalletDto(client.getId().toString(), client.getClientName(), client.getClientCode(),

@@ -52,24 +52,24 @@ public class OrganisationManagedBillsController {
 
     /** Every client's managed bills, or just one client's if {@code clientId} is given. */
     @GetMapping
-    public List<BillDtos.ManagedBillDto> list(@RequestParam(required = false) UUID clientId) {
+    public List<BillDtos.ManagedBillDto> list(@RequestParam(required = false) String clientId) {
         Function<String, String> serviceNames = categoryLabels.lookup();
-        Function<UUID, String> clientNames = BillDtos.clientNameLookup(clientRepository);
-        Function<UUID, String> clientCodes = BillDtos.clientCodeLookup(clientRepository);
+        Function<String, String> clientNames = BillDtos.clientNameLookup(clientRepository);
+        Function<String, String> clientCodes = BillDtos.clientCodeLookup(clientRepository);
         List<Bill> bills = clientId != null
                 ? billRepository.findByClientIdOrderByCreatedAtDesc(clientId)
-                : billRepository.findAllByOrderByCreatedAtDesc();
-        Function<UUID, String> branches = branchNames();
+                : billRepository.findAllByOrderByBillIdDesc();
+        Function<String, String> branches = branchNames();
         return bills.stream().map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes, branches)).toList();
     }
 
     @GetMapping("/{billId}")
-    public BillDtos.ManagedBillDto get(@PathVariable UUID billId) {
+    public BillDtos.ManagedBillDto get(@PathVariable String billId) {
         return toDto(getOrThrow(billId));
     }
 
     @GetMapping("/{billId}/payments")
-    public List<BillDtos.BillPaymentDto> payments(@PathVariable UUID billId) {
+    public List<BillDtos.BillPaymentDto> payments(@PathVariable String billId) {
         Bill bill = getOrThrow(billId);
         Function<String, String> names = categoryLabels.lookup();
         return billPaymentRepository.findByBillIdOrderByCreatedAtDesc(billId).stream()
@@ -78,20 +78,20 @@ public class OrganisationManagedBillsController {
     }
 
     @GetMapping("/{billId}/payments/{paymentId}")
-    public BillDtos.BillPaymentDto payment(@PathVariable UUID billId, @PathVariable UUID paymentId) {
+    public BillDtos.BillPaymentDto payment(@PathVariable String billId, @PathVariable UUID paymentId) {
         Bill bill = getOrThrow(billId);
         BillPayment payment = getOwnedPayment(bill, paymentId);
         return BillDtos.BillPaymentDto.from(payment, bill, categoryLabels.lookup(), false, false, null, null, null, branchNames());
     }
 
     @GetMapping("/{billId}/payments/{paymentId}/activity-log")
-    public List<BillDtos.ActivityLogDto> paymentActivityLog(@PathVariable UUID billId, @PathVariable UUID paymentId) {
+    public List<BillDtos.ActivityLogDto> paymentActivityLog(@PathVariable String billId, @PathVariable UUID paymentId) {
         Bill bill = getOrThrow(billId);
         getOwnedPayment(bill, paymentId); // 404s if not this bill's
         return activityLogService.listForBillPayment(paymentId).stream().map(BillDtos.ActivityLogDto::from).toList();
     }
 
-    private Bill getOrThrow(UUID billId) {
+    private Bill getOrThrow(String billId) {
         return billRepository.findById(billId).orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
     }
 
@@ -110,7 +110,7 @@ public class OrganisationManagedBillsController {
                 BillDtos.clientNameLookup(clientRepository), BillDtos.clientCodeLookup(clientRepository), branchNames());
     }
 
-    private Function<UUID, String> branchNames() {
+    private Function<String, String> branchNames() {
         return branchRepository.findAll().stream()
                 .collect(Collectors.toMap(Branch::getId, Branch::getName, (left, right) -> left))::get;
     }

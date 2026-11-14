@@ -1,5 +1,7 @@
 package com.b2bfintech.app.controller;
 
+import com.b2bfintech.common.security.AuthenticatedUser;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import com.b2bfintech.app.service.TenantUserProvisioningService;
 import com.b2bfintech.common.audit.AuditService;
 import com.b2bfintech.common.exception.BadRequestException;
@@ -13,7 +15,6 @@ import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.organisation.service.OnboardingService;
 import com.b2bfintech.organisation.service.TenantUserService;
 import com.b2bfintech.wallet.entity.LedgerEntry;
-import com.b2bfintech.wallet.entity.WalletAccount;
 import com.b2bfintech.wallet.service.WalletService;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
@@ -75,11 +76,17 @@ public class ClientController {
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
     @Transactional
-    public ClientDto create(@Valid @RequestBody CreateClientRequest request) {
+    public ClientDto create(@Valid @RequestBody CreateClientRequest request,
+                            @AuthenticationPrincipal AuthenticatedUser principal) {
         // Transactional so a failure provisioning the admin user (duplicate phone/email, etc.)
         // rolls back the client row too, instead of leaving a phantom client with no admin.
         Client client = clientService.create(
-                request.clientName(), request.phoneNumber(), request.clientType(), request.corporateKind());
+                request.clientName(), request.phoneNumber(), request.email(), request.clientType(), request.corporateKind());
+        if (principal != null && principal.userId() != null) {
+            client.setOnboardedBy("ORG_ADMIN");
+            client.setOnboardedById(principal.userId());
+            client = clientService.save(client);
+        }
         onboardingService.ensure(client.getId());
         provisioningService.createClientUser(
                 request.phoneNumber(), request.clientName(), "CLIENT_ADMIN", client, request.email(), request.password());
@@ -88,7 +95,7 @@ public class ClientController {
                 throw new BadRequestException("A vendor does not have a wallet");
             }
         } else {
-            creditOpeningBalance(client, request.openingBalance());
+            creditOpeningBalance(client, request.openingBalance(), principal == null ? null : principal.userId());
         }
         return toDto(client);
     }
@@ -96,9 +103,9 @@ public class ClientController {
     @GetMapping
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
     public List<ClientDto> list() {
-        Map<UUID, Long> branchCounts = new HashMap<>();
-        for (BranchRepository.BranchCount row : branchRepository.countGroupedByClientId()) {
-            branchCounts.put(row.getClientId(), row.getBranchCount());
+        Map<String, Long> branchCounts = new HashMap<>();
+        for (BranchRepository.BranchCount row : branchRepository.countGroupedBySourceId()) {
+            branchCounts.put(row.getSourceId(), row.getBranchCount());
         }
         return clientService.listAll().stream()
                 .map(client -> toDto(client, branchCounts.getOrDefault(client.getId(), 0L)))
@@ -107,19 +114,19 @@ public class ClientController {
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
-    public ClientDto get(@PathVariable UUID id) {
+    public ClientDto get(@PathVariable String id) {
         return toDto(clientService.getById(id));
     }
 
     @PatchMapping("/{id}/sales-person")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public ClientDto assignSalesPerson(@PathVariable UUID id, @RequestBody SalesPersonRequest request) {
+    public ClientDto assignSalesPerson(@PathVariable String id, @RequestBody SalesPersonRequest request) {
         return toDto(clientService.assignSalesPerson(id, parseSalesUserId(request.salesUserId())));
     }
 
     @PatchMapping("/{id}/status")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public ClientDto setStatus(@PathVariable UUID id, @RequestBody StatusRequest request) {
+    public ClientDto setStatus(@PathVariable String id, @RequestBody StatusRequest request) {
         Client.ClientStatus status = Client.ClientStatus.valueOf(request.status());
         if (status == Client.ClientStatus.ACTIVE) {
             onboardingService.assertCanActivate(id);
@@ -131,7 +138,7 @@ public class ClientController {
     @PostMapping("/{id}/users")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
-    public ClientUserDto addUser(@PathVariable UUID id, @Valid @RequestBody AddClientUserRequest request) {
+    public ClientUserDto addUser(@PathVariable String id, @Valid @RequestBody AddClientUserRequest request) {
         if (!ASSIGNABLE_CLIENT_ROLES.contains(request.role())) {
             throw new BadRequestException("role must be one of " + ASSIGNABLE_CLIENT_ROLES);
         }
@@ -142,13 +149,13 @@ public class ClientController {
 
     @GetMapping("/{id}/users")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public List<ClientUserDto> listUsers(@PathVariable UUID id) {
+    public List<ClientUserDto> listUsers(@PathVariable String id) {
         return tenantUserService.listForClient(id).stream().map(ClientUserDto::from).toList();
     }
 
     @PatchMapping("/{id}/users/{userId}/suspend")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public void suspendUser(@PathVariable UUID id, @PathVariable UUID userId) {
+    public void suspendUser(@PathVariable String id, @PathVariable String userId) {
         AppUser target = requireClientUser(id, userId);
         if (isLastActiveAdmin(id, target)) {
             throw new BadRequestException("Cannot suspend the last active Client Admin");
@@ -158,20 +165,20 @@ public class ClientController {
 
     @PatchMapping("/{id}/users/{userId}/reactivate")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public void reactivateUser(@PathVariable UUID id, @PathVariable UUID userId) {
+    public void reactivateUser(@PathVariable String id, @PathVariable String userId) {
         requireClientUser(id, userId);
         provisioningService.reactivateUser(userId);
     }
 
-    private AppUser requireClientUser(UUID clientId, UUID userId) {
+    private AppUser requireClientUser(String clientId, String userId) {
         AppUser user = tenantUserService.getById(userId);
-        if (user.getClient() == null || !clientId.equals(user.getClient().getId())) {
+        if (user.organisationId() == null || !clientId.equals(user.organisationId())) {
             throw new ResourceNotFoundException("User not found");
         }
         return user;
     }
 
-    private boolean isLastActiveAdmin(UUID clientId, AppUser target) {
+    private boolean isLastActiveAdmin(String clientId, AppUser target) {
         if (!"CLIENT_ADMIN".equals(target.getRole().getName())) return false;
         return tenantUserService.listForClient(clientId).stream()
                 .filter(user -> "CLIENT_ADMIN".equals(user.getRole().getName()))
@@ -207,15 +214,11 @@ public class ClientController {
             @DecimalMin(value = "0.00", inclusive = true) @Digits(integer = 12, fraction = 2) BigDecimal openingBalance) {
     }
 
-    private void creditOpeningBalance(Client client, BigDecimal openingBalance) {
+    private void creditOpeningBalance(Client client, BigDecimal openingBalance, String userId) {
         if (openingBalance == null || openingBalance.signum() <= 0) {
             return;
         }
-        walletService.credit(
-                client.getId(), WalletAccount.WalletType.WALLET, openingBalance,
-                LedgerEntry.ReferenceType.ADJUSTMENT, client.getId().toString(),
-                "onboard-credit-" + client.getId(),
-                "Opening balance on client onboard");
+        walletService.credit(client.getId(), openingBalance, LedgerEntry.RECHARGE, userId);
         auditService.record("WALLET_OPENING_CREDIT", "Client", client.getId().toString(),
                 "credited opening balance " + openingBalance);
     }
@@ -229,7 +232,7 @@ public class ClientController {
     public record ClientDto(
             String id, String clientName, String clientCode, String contactPhone, String clientType,
             String corporateKind, String status,
-            Instant createdAt, String kycStatus, String contractStatus, Instant detailsSubmittedAt,
+            Instant createdAt, String kycStatus, String contractStatus, boolean detailsSubmitted,
             String salesUserId, String salesPersonName, long branchCount) {
         static ClientDto from(Client a, ClientOnboarding onboarding, String salesPersonName, long branchCount) {
             return new ClientDto(a.getId().toString(), a.getClientName(), a.getClientCode(), a.getContactPhone(),
@@ -237,15 +240,15 @@ public class ClientController {
                     a.getCorporateKind() == null ? null : a.getCorporateKind().name(),
                     a.getStatus().name(), a.getCreatedAt(),
                     onboarding.getKycStatus().name(), onboarding.getContractStatus().name(),
-                    onboarding.getDetailsSubmittedAt(),
-                    a.getSalesUserId() == null ? null : a.getSalesUserId().toString(),
+                    onboarding.isDetailsSubmitted(),
+                    a.getSalesUserId(),
                     salesPersonName, branchCount);
         }
     }
 
     private ClientDto toDto(Client client) {
         long branchCount = client.getClientType() == Client.ClientType.CORPORATE
-                ? branchRepository.countByClientId(client.getId())
+                ? branchRepository.countBySourceId(client.getId().toString())
                 : 0L;
         return toDto(client, branchCount);
     }
@@ -254,20 +257,20 @@ public class ClientController {
         String salesPersonName = null;
         if (client.getSalesUserId() != null) {
             salesPersonName = appUserRepository.findById(client.getSalesUserId())
-                    .map(AppUser::getFullName)
+                    .map(AppUser::getName)
                     .orElse(null);
         }
         return ClientDto.from(client, onboardingService.get(client.getId()), salesPersonName, branchCount);
     }
 
-    private static UUID parseSalesUserId(String raw) {
+    private static String parseSalesUserId(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
-        try {
-            return UUID.fromString(raw.trim());
-        } catch (IllegalArgumentException ex) {
+        String code = raw.trim().toUpperCase();
+        if (!code.matches("[A-Z0-9]{6}")) {
             throw new BadRequestException("Choose an active sales person");
         }
+        return code;
     }
 }

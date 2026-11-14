@@ -1,77 +1,67 @@
 package com.b2bfintech.platform.repository;
 
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
+import com.b2bfintech.platform.entity.BbpsCategoryEntity;
 import com.b2bfintech.platform.model.BbpsCategory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-@Repository
-public class BbpsCategoryRepository {
+public interface BbpsCategoryRepository extends JpaRepository<BbpsCategoryEntity, UUID> {
 
-    private static final RowMapper<BbpsCategory> MAPPER = (rs, rowNum) -> new BbpsCategory(
-            UUID.fromString(rs.getString("id")),
-            rs.getString("provider_code"),
-            rs.getString("category_id"),
-            rs.getString("name"),
-            rs.getString("category_group"),
-            rs.getBoolean("active"),
-            rs.getTimestamp("synced_at").toInstant());
+    List<BbpsCategoryEntity> findByActiveTrueOrderByNameAsc();
 
-    private final JdbcTemplate jdbcTemplate;
+    Optional<BbpsCategoryEntity> findFirstByCategoryIdAndActiveTrue(String categoryId);
 
-    public BbpsCategoryRepository(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    Optional<BbpsCategoryEntity> findByProviderCodeAndCategoryIdAndActiveTrue(String providerCode, String categoryId);
+
+    Optional<BbpsCategoryEntity> findByProviderCodeAndCategoryId(String providerCode, String categoryId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update BbpsCategoryEntity c set c.active = false where c.providerCode = :providerCode")
+    void deactivateAll(@Param("providerCode") String providerCode);
+
+    default List<BbpsCategory> findAllActive() {
+        return findByActiveTrueOrderByNameAsc().stream().map(BbpsCategoryEntity::toModel).toList();
     }
 
-    public List<BbpsCategory> findAllActive() {
-        return jdbcTemplate.query(
-                "SELECT * FROM bbps_category WHERE active = TRUE ORDER BY name", MAPPER);
+    default Optional<BbpsCategory> findActiveByCategoryId(String categoryId) {
+        return findFirstByCategoryIdAndActiveTrue(categoryId).map(BbpsCategoryEntity::toModel);
     }
 
-    public Optional<BbpsCategory> findActiveByCategoryId(String categoryId) {
-        return jdbcTemplate.query(
-                "SELECT * FROM bbps_category WHERE category_id = ? AND active = TRUE",
-                MAPPER, categoryId).stream().findFirst();
+    default Optional<BbpsCategory> findActive(String providerCode, String categoryId) {
+        return findByProviderCodeAndCategoryIdAndActiveTrue(providerCode, categoryId).map(BbpsCategoryEntity::toModel);
     }
 
-    public Optional<BbpsCategory> findActive(String providerCode, String categoryId) {
-        return jdbcTemplate.query(
-                "SELECT * FROM bbps_category WHERE provider_code = ? AND category_id = ? AND active = TRUE",
-                MAPPER, providerCode, categoryId).stream().findFirst();
-    }
-
-    public Map<String, String> namesById() {
+    default Map<String, String> namesById() {
         Map<String, String> names = new LinkedHashMap<>();
-        jdbcTemplate.query("SELECT category_id, name FROM bbps_category", rs -> {
-            names.put(rs.getString("category_id"), rs.getString("name"));
-        });
+        findAll().forEach(row -> names.put(row.getCategoryId(), row.getName()));
         return names;
     }
 
-    public void deactivateAll(String providerCode) {
-        jdbcTemplate.update("UPDATE bbps_category SET active = FALSE WHERE provider_code = ?", providerCode);
-    }
-
-    public void upsert(String providerCode, BbpsProvider.ProviderCategory category) {
-        jdbcTemplate.update("""
-                INSERT INTO bbps_category
-                    (id, provider_code, category_id, name, category_group, active, synced_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (provider_code, category_id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    category_group = EXCLUDED.category_group,
-                    active = EXCLUDED.active,
-                    synced_at = EXCLUDED.synced_at
-                """,
-                UUID.randomUUID(), providerCode, category.categoryId(), category.name(), category.group(),
-                category.active(), Timestamp.from(java.time.Instant.now()));
+    @Transactional
+    default void upsert(String providerCode, BbpsProvider.ProviderCategory category) {
+        BbpsCategoryEntity row = findByProviderCodeAndCategoryId(providerCode, category.categoryId())
+                .orElseGet(() -> {
+                    BbpsCategoryEntity created = new BbpsCategoryEntity();
+                    created.setId(UUID.randomUUID());
+                    created.setProviderCode(providerCode);
+                    created.setCategoryId(category.categoryId());
+                    return created;
+                });
+        row.setName(category.name());
+        row.setCategoryGroup(category.group());
+        row.setActive(category.active());
+        row.setSyncedAt(Instant.now());
+        save(row);
     }
 }

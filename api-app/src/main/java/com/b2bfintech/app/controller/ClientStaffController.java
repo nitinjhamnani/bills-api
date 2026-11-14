@@ -51,7 +51,7 @@ public class ClientStaffController {
 
     @GetMapping
     public List<ClientUserDto> list(
-            @PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+            @PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return tenantUserService.listForClient(clientId).stream().map(ClientUserDto::from).toList();
     }
@@ -59,7 +59,7 @@ public class ClientStaffController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ClientUserDto add(
-            @PathVariable UUID clientId,
+            @PathVariable String clientId,
             @Valid @RequestBody AddClientUserRequest request,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
@@ -74,8 +74,8 @@ public class ClientStaffController {
 
     @PatchMapping("/{userId}/suspend")
     public void suspend(
-            @PathVariable UUID clientId,
-            @PathVariable UUID userId,
+            @PathVariable String clientId,
+            @PathVariable String userId,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         AppUser target = requireClientUser(clientId, userId);
@@ -87,23 +87,23 @@ public class ClientStaffController {
 
     @PatchMapping("/{userId}/reactivate")
     public void reactivate(
-            @PathVariable UUID clientId,
-            @PathVariable UUID userId,
+            @PathVariable String clientId,
+            @PathVariable String userId,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         requireClientUser(clientId, userId);
         provisioningService.reactivateUser(userId);
     }
 
-    private AppUser requireClientUser(UUID clientId, UUID userId) {
+    private AppUser requireClientUser(String clientId, String userId) {
         AppUser user = tenantUserService.getById(userId);
-        if (user.getClient() == null || !clientId.equals(user.getClient().getId())) {
+        if (user.organisationId() == null || !clientId.equals(user.organisationId())) {
             throw new ResourceNotFoundException("User not found");
         }
         return user;
     }
 
-    private boolean isLastActiveAdmin(UUID clientId, AppUser target) {
+    private boolean isLastActiveAdmin(String clientId, AppUser target) {
         if (!"CLIENT_ADMIN".equals(target.getRole().getName())) return false;
         return tenantUserService.listForClient(clientId).stream()
                 .filter(user -> "CLIENT_ADMIN".equals(user.getRole().getName()))

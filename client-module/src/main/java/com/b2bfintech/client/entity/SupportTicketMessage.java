@@ -34,8 +34,8 @@ public class SupportTicketMessage {
     @Column(name = "author_side", nullable = false)
     private AuthorSide authorSide;
 
-    @Column(name = "author_user_id")
-    private UUID authorUserId;
+    @Column(name = "author_user_id", length = 6)
+    private String authorUserId;
 
     @Column(name = "author_name", nullable = false)
     private String authorName;

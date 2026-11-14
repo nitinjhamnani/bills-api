@@ -1,113 +1,119 @@
 package com.b2bfintech.app.controller;
 
 import com.b2bfintech.app.service.BranchService;
+import com.b2bfintech.app.service.CategoryLabels;
 import com.b2bfintech.app.service.ClientPaymentService;
 import com.b2bfintech.billing.entity.Bill;
+import com.b2bfintech.billing.entity.BillFetch;
 import com.b2bfintech.billing.entity.BillPayment;
+import com.b2bfintech.billing.repository.BillFetchRepository;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.common.security.AuthenticatedUser;
 import com.b2bfintech.common.security.ClientScopeGuard;
-import com.b2bfintech.app.service.CategoryLabels;
 import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.repository.BranchRepository;
-import com.b2bfintech.wallet.repository.LedgerEntryRepository;
 import jakarta.validation.constraints.NotEmpty;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** The client's My Payments screen: bills awaiting the client's payment action (single or bulk). */
+/** The corporate's My Dues (unpaid fetches) and My Payments (bill_payment rows). */
 @RestController
-@RequestMapping("/api/v1/clients/{clientId}/my-payments")
+@RequestMapping("/api/v1/clients/{clientId}")
 @PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
 public class ClientMyPaymentsController {
 
     private final ClientPaymentService clientPaymentService;
     private final BillPaymentRepository billPaymentRepository;
+    private final BillFetchRepository billFetchRepository;
     private final BillRepository billRepository;
     private final CategoryLabels categoryLabels;
-    private final LedgerEntryRepository ledgerEntryRepository;
     private final BranchRepository branchRepository;
     private final BranchService branchService;
 
     public ClientMyPaymentsController(
-            ClientPaymentService clientPaymentService, BillPaymentRepository billPaymentRepository, BillRepository billRepository,
-            CategoryLabels categoryLabels, LedgerEntryRepository ledgerEntryRepository, BranchRepository branchRepository,
+            ClientPaymentService clientPaymentService, BillPaymentRepository billPaymentRepository,
+            BillFetchRepository billFetchRepository, BillRepository billRepository,
+            CategoryLabels categoryLabels, BranchRepository branchRepository,
             BranchService branchService) {
         this.clientPaymentService = clientPaymentService;
         this.billPaymentRepository = billPaymentRepository;
+        this.billFetchRepository = billFetchRepository;
         this.billRepository = billRepository;
         this.categoryLabels = categoryLabels;
-        this.ledgerEntryRepository = ledgerEntryRepository;
         this.branchRepository = branchRepository;
         this.branchService = branchService;
     }
 
-    @GetMapping
-    public List<BillDtos.BillPaymentDto> list(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+    @GetMapping("/my-dues")
+    public List<BillDtos.BillPaymentDto> dues(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         Function<String, String> names = categoryLabels.lookup();
-        return billPaymentRepository.findByClientIdAndPaymentStatusOrderByCreatedAtDesc(clientId, Bill.PaymentStatus.PENDING)
-                .stream().filter(payment -> visibleTo(principal, payment)).map(p -> toDto(p, names)).toList();
+        Function<String, String> branches = branchNames();
+        List<BillFetch> dues = billFetchRepository.findDues(clientId);
+        Map<String, Bill> bills = billRepository.findAllById(dues.stream().map(BillFetch::getBillId).toList()).stream()
+                .collect(Collectors.toMap(Bill::getId, Function.identity()));
+        return dues.stream()
+                .filter(fetch -> bills.containsKey(fetch.getBillId()))
+                .filter(fetch -> visibleTo(principal, bills.get(fetch.getBillId())))
+                .map(fetch -> BillDtos.BillPaymentDto.fromDue(fetch, bills.get(fetch.getBillId()), names, branches))
+                .toList();
     }
 
-    @PostMapping("/pay")
+    @PostMapping("/my-dues/pay")
     @PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
-    public List<BillDtos.BillPaymentDto> pay(@PathVariable UUID clientId, @RequestBody PayRequest request,
-                                              @AuthenticationPrincipal AuthenticatedUser principal) {
+    public List<BillDtos.CorpPaymentDto> pay(@PathVariable String clientId, @RequestBody PayRequest request,
+                                             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         if ("BRANCH_USER".equals(principal.role())) {
             throw new BadRequestException("A branch cannot pay bills");
         }
-        Function<String, String> names = categoryLabels.lookup();
-        List<BillPayment> paid = clientPaymentService.pay(clientId, request.billPaymentIds(), principal.phoneNumber());
-        return paid.stream().map(p -> toDto(p, names)).toList();
+        Function<String, String> branches = branchNames();
+        return clientPaymentService.payDues(clientId, request.billFetchIds(), principal.userId()).stream()
+                .map(payment -> toDto(payment, branches))
+                .toList();
     }
 
-    @GetMapping("/{billPaymentId}/transactions")
-    public List<BillDtos.LedgerEntryDto> transactions(@PathVariable UUID clientId, @PathVariable UUID billPaymentId,
-                                                        @AuthenticationPrincipal AuthenticatedUser principal) {
+    @GetMapping("/my-payments")
+    public List<BillDtos.CorpPaymentDto> payments(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        BillPayment payment = getOwnedPayment(clientId, billPaymentId);
-        if (!visibleTo(principal, payment)) {
-            throw new ResourceNotFoundException("Bill payment not found");
-        }
-        return ledgerEntryRepository.findByReferenceIdOrderByCreatedAtDesc(billPaymentId.toString()).stream()
-                .map(BillDtos.LedgerEntryDto::from).toList();
+        Function<String, String> branches = branchNames();
+        return billPaymentRepository.findByClientIdOrderByCreatedAtDesc(clientId).stream()
+                .filter(payment -> visibleTo(principal, billOf(payment)))
+                .map(payment -> toDto(payment, branches))
+                .toList();
     }
 
-    private BillPayment getOwnedPayment(UUID clientId, UUID billPaymentId) {
-        BillPayment payment = billPaymentRepository.findById(billPaymentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
-        if (!payment.getClientId().equals(clientId)) {
-            throw new ResourceNotFoundException("Bill payment not found");
-        }
-        return payment;
+    private Bill billOf(BillPayment payment) {
+        return billRepository.findById(payment.getBillId()).orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
     }
 
-    private boolean visibleTo(AuthenticatedUser principal, BillPayment payment) {
+    private boolean visibleTo(AuthenticatedUser principal, Bill bill) {
         if (!"BRANCH_USER".equals(principal.role())) {
             return true;
         }
-        Bill bill = billRepository.findById(payment.getBillId()).orElse(null);
         return bill != null && branchService.branchUserCanSee(principal, bill.getBranchId());
     }
 
-    private BillDtos.BillPaymentDto toDto(BillPayment payment, Function<String, String> names) {
-        Bill bill = billRepository.findById(payment.getBillId()).orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
-        Function<UUID, String> branches = branchRepository.findAll().stream()
-                .collect(Collectors.toMap(Branch::getId, Branch::getName, (left, right) -> left))::get;
-        return BillDtos.BillPaymentDto.from(payment, bill, names, false, false, null, null, null, branches);
+    private BillDtos.CorpPaymentDto toDto(BillPayment payment, Function<String, String> branches) {
+        return BillDtos.CorpPaymentDto.from(payment, billOf(payment), branches);
     }
 
-    public record PayRequest(@NotEmpty List<UUID> billPaymentIds) {
+    private Function<String, String> branchNames() {
+        Map<String, String> names = branchRepository.findAll().stream()
+                .collect(Collectors.toMap(Branch::getId, Branch::getName, (left, right) -> left));
+        return names::get;
+    }
+
+    public record PayRequest(@NotEmpty List<UUID> billFetchIds) {
     }
 }

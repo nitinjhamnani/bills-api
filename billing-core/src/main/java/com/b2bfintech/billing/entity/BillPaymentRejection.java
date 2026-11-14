@@ -29,7 +29,7 @@ public class BillPaymentRejection {
     private UUID billPaymentId;
 
     @Column(name = "vendor_client_id", nullable = false)
-    private UUID vendorClientId;
+    private String vendorClientId;
 
     @Column(nullable = false, length = 300)
     private String reason;

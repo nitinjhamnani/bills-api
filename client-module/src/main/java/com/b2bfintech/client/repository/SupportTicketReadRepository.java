@@ -9,7 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface SupportTicketReadRepository extends JpaRepository<SupportTicketRead, UUID> {
-    Optional<SupportTicketRead> findByTicketIdAndUserId(UUID ticketId, UUID userId);
+    Optional<SupportTicketRead> findByTicketIdAndUserId(UUID ticketId, String userId);
 
-    List<SupportTicketRead> findByUserIdAndTicketIdIn(UUID userId, Collection<UUID> ticketIds);
+    List<SupportTicketRead> findByUserIdAndTicketIdIn(String userId, Collection<UUID> ticketIds);
 }

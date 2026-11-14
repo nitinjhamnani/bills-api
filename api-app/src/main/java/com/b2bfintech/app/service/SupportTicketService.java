@@ -39,8 +39,8 @@ public class SupportTicketService {
 
     @Transactional
     public SupportTicket raise(
-            UUID clientId, String subject, String description, String raisedBy,
-            UUID authorUserId, String authorName) {
+            String clientId, String subject, String description, String raisedBy,
+            String authorUserId, String authorName) {
         if (subject == null || subject.isBlank()) {
             throw new BadRequestException("subject is required");
         }
@@ -63,7 +63,7 @@ public class SupportTicketService {
     @Transactional
     public SupportTicket pickUp(UUID id, String actor) {
         SupportTicket ticket = getOrThrow(id);
-        if (ticket.getStatus() != SupportTicket.Status.OPEN) {
+        if (!isStatus(ticket, SupportTicket.Status.OPEN)) {
             throw new BadRequestException("Ticket is not open");
         }
         ticket.setStatus(SupportTicket.Status.IN_PROGRESS);
@@ -76,9 +76,9 @@ public class SupportTicketService {
     }
 
     @Transactional
-    public SupportTicket resolve(UUID id, String actor, String resolutionNotes, UUID authorUserId, String authorName) {
+    public SupportTicket resolve(UUID id, String actor, String resolutionNotes, String authorUserId, String authorName) {
         SupportTicket ticket = getOrThrow(id);
-        if (ticket.getStatus() == SupportTicket.Status.RESOLVED) {
+        if (isStatus(ticket, SupportTicket.Status.RESOLVED)) {
             throw new BadRequestException("Ticket is already resolved");
         }
         ticket.setStatus(SupportTicket.Status.RESOLVED);
@@ -98,21 +98,22 @@ public class SupportTicketService {
 
     @Transactional
     public SupportTicketMessage addClientMessage(
-            UUID clientId, UUID ticketId, UUID authorUserId, String authorName, String body) {
+            String clientId, UUID ticketId, String authorUserId, String authorName, String body) {
         SupportTicket ticket = getForClient(clientId, ticketId);
         assertCanReply(ticket);
         SupportTicketMessage message = writeMessage(
                 ticket.getId(), SupportTicketMessage.AuthorSide.CLIENT, authorUserId, authorName,
                 requireBody(body));
         markRead(ticket.getId(), authorUserId);
+        MoneyActionLog.record("support_reply", authorUserId, ticket.getId().toString());
         return message;
     }
 
     @Transactional
     public SupportTicketMessage addOrganisationMessage(
-            UUID ticketId, UUID authorUserId, String authorName, String body) {
+            UUID ticketId, String authorUserId, String authorName, String body) {
         SupportTicket ticket = getOrThrow(ticketId);
-        if (ticket.getStatus() == SupportTicket.Status.OPEN) {
+        if (isStatus(ticket, SupportTicket.Status.OPEN)) {
             throw new BadRequestException("Pick up the ticket before sending a message");
         }
         assertCanReply(ticket);
@@ -120,24 +121,25 @@ public class SupportTicketService {
                 ticket.getId(), SupportTicketMessage.AuthorSide.ORGANISATION, authorUserId, authorName,
                 requireBody(body));
         markRead(ticket.getId(), authorUserId);
+        MoneyActionLog.record("support_reply", authorUserId, ticket.getId().toString());
         return message;
     }
 
     @Transactional
-    public List<SupportTicketMessage> listMessages(UUID ticketId, UUID userId) {
+    public List<SupportTicketMessage> listMessages(UUID ticketId, String userId) {
         getOrThrow(ticketId);
         markRead(ticketId, userId);
         return messageRepository.findByTicketIdOrderByCreatedAtAsc(ticketId);
     }
 
     @Transactional
-    public List<SupportTicketMessage> listMessagesForClient(UUID clientId, UUID ticketId, UUID userId) {
+    public List<SupportTicketMessage> listMessagesForClient(String clientId, UUID ticketId, String userId) {
         getForClient(clientId, ticketId);
         markRead(ticketId, userId);
         return messageRepository.findByTicketIdOrderByCreatedAtAsc(ticketId);
     }
 
-    public List<SupportTicket> listForClient(UUID clientId) {
+    public List<SupportTicket> listForClient(String clientId) {
         return repository.findByClientIdOrderByCreatedAtDesc(clientId);
     }
 
@@ -145,7 +147,7 @@ public class SupportTicketService {
         return repository.findAllByOrderByCreatedAtDesc();
     }
 
-    public SupportTicket getForClient(UUID clientId, UUID ticketId) {
+    public SupportTicket getForClient(String clientId, UUID ticketId) {
         SupportTicket ticket = getOrThrow(ticketId);
         if (!ticket.getClientId().equals(clientId)) {
             throw new ResourceNotFoundException("Ticket not found");
@@ -154,8 +156,8 @@ public class SupportTicketService {
     }
 
     @Transactional
-    public void markRead(UUID ticketId, UUID userId) {
-        if (userId == null) return;
+    public void markRead(UUID ticketId, String userId) {
+        if (userId == null || userId.isBlank()) return;
         SupportTicketRead read = readRepository.findByTicketIdAndUserId(ticketId, userId)
                 .orElseGet(() -> {
                     SupportTicketRead created = new SupportTicketRead();
@@ -168,20 +170,22 @@ public class SupportTicketService {
     }
 
     public Map<UUID, Boolean> unreadByTicket(
-            UUID userId, SupportTicketMessage.AuthorSide incomingSide, Collection<UUID> ticketIds) {
-        Map<UUID, Boolean> unread = new LinkedHashMap<>();
+            String userId, SupportTicketMessage.AuthorSide incomingSide, Collection<UUID> ticketIds) {
+        Map<UUID, Boolean> unread = new HashMap<>();
         if (ticketIds == null || ticketIds.isEmpty()) {
             return unread;
         }
         for (UUID ticketId : ticketIds) {
             unread.put(ticketId, false);
         }
-        if (userId == null) {
+        if (userId == null || userId.isBlank()) {
             return unread;
         }
         Map<UUID, Instant> latestIncoming = new HashMap<>();
         for (SupportTicketMessage message : messageRepository.findByTicketIdInOrderByCreatedAtDesc(ticketIds)) {
-            if (message.getAuthorSide() != incomingSide) continue;
+            if (message.getAuthorSide() != incomingSide) {
+                continue;
+            }
             latestIncoming.putIfAbsent(message.getTicketId(), message.getCreatedAt());
         }
         Map<UUID, Instant> lastRead = new HashMap<>();
@@ -190,14 +194,16 @@ public class SupportTicketService {
         }
         for (UUID ticketId : ticketIds) {
             Instant incomingAt = latestIncoming.get(ticketId);
-            if (incomingAt == null) continue;
+            if (incomingAt == null) {
+                continue;
+            }
             Instant readAt = lastRead.get(ticketId);
             unread.put(ticketId, readAt == null || incomingAt.isAfter(readAt));
         }
         return unread;
     }
 
-    public int unreadTicketCount(UUID userId, SupportTicketMessage.AuthorSide incomingSide, List<SupportTicket> tickets) {
+    public int unreadTicketCount(String userId, SupportTicketMessage.AuthorSide incomingSide, List<SupportTicket> tickets) {
         return (int) unreadByTicket(userId, incomingSide, tickets.stream().map(SupportTicket::getId).toList())
                 .values().stream().filter(Boolean::booleanValue).count();
     }
@@ -218,9 +224,13 @@ public class SupportTicketService {
     }
 
     private void assertCanReply(SupportTicket ticket) {
-        if (ticket.getStatus() == SupportTicket.Status.RESOLVED) {
+        if (isStatus(ticket, SupportTicket.Status.RESOLVED)) {
             throw new BadRequestException("Ticket is resolved");
         }
+    }
+
+    private static boolean isStatus(SupportTicket ticket, SupportTicket.Status status) {
+        return ticket.getStatus() == status;
     }
 
     private String requireBody(String body) {
@@ -231,7 +241,7 @@ public class SupportTicketService {
     }
 
     private SupportTicketMessage writeMessage(
-            UUID ticketId, SupportTicketMessage.AuthorSide side, UUID authorUserId, String authorName, String body) {
+            UUID ticketId, SupportTicketMessage.AuthorSide side, String authorUserId, String authorName, String body) {
         SupportTicketMessage message = new SupportTicketMessage();
         message.setTicketId(ticketId);
         message.setAuthorSide(side);

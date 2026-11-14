@@ -32,7 +32,7 @@ public class OrganisationReportsController {
     @GetMapping("/settlement-pipeline")
     public List<BillDtos.BillPaymentDto> settlementPipeline(
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) UUID clientId,
+            @RequestParam(required = false) String clientId,
             @RequestParam(required = false) String dateField,
             @RequestParam(required = false) String orgStatus) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
@@ -57,7 +57,7 @@ public class OrganisationReportsController {
     @GetMapping("/revenue")
     public List<ReportDtos.RevenueRowDto> revenue(
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) UUID clientId) {
+            @RequestParam(required = false) String clientId) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.revenue(range.from(), range.to(), clientId);
     }
@@ -66,7 +66,7 @@ public class OrganisationReportsController {
     @GetMapping("/revenue-by-client")
     public List<ReportDtos.RevenueByClientRowDto> revenueByClient(
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) UUID clientId) {
+            @RequestParam(required = false) String clientId) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.revenueByClient(range.from(), range.to(), clientId);
     }
@@ -75,7 +75,7 @@ public class OrganisationReportsController {
     @GetMapping("/funding")
     public List<ReportDtos.FundingRowDto> funding(
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) UUID clientId,
+            @RequestParam(required = false) String clientId,
             @RequestParam(required = false) String status) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.funding(range.from(), range.to(), clientId, status);
@@ -85,7 +85,7 @@ public class OrganisationReportsController {
     @GetMapping("/funding-adjustments")
     public List<ReportDtos.AdjustmentRowDto> fundingAdjustments(
             @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) UUID clientId) {
+            @RequestParam(required = false) String clientId) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.fundingAdjustments(range.from(), range.to(), clientId);
     }

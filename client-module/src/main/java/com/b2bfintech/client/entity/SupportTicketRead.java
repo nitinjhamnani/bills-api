@@ -27,8 +27,8 @@ public class SupportTicketRead {
     @Column(name = "ticket_id", nullable = false)
     private UUID ticketId;
 
-    @Column(name = "user_id", nullable = false)
-    private UUID userId;
+    @Column(name = "user_id", nullable = false, length = 6)
+    private String userId;
 
     @Column(name = "last_read_at", nullable = false)
     private Instant lastReadAt;

@@ -24,13 +24,7 @@ public class ClientCodeFolderResolver implements ClientCodeResolver {
         if (principal == null || principal.clientId() == null || principal.clientId().isBlank()) {
             throw new BadRequestException("A client session is required to upload a file");
         }
-        UUID clientId;
-        try {
-            clientId = UUID.fromString(principal.clientId());
-        } catch (IllegalArgumentException ex) {
-            throw new BadRequestException("A client session is required to upload a file");
-        }
-        String code = clientRepository.findById(clientId)
+        String code = clientRepository.findById(principal.clientId())
                 .orElseThrow(() -> new ResourceNotFoundException("Client not found"))
                 .getClientCode();
         if (code == null || code.isBlank()) {

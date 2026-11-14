@@ -2,6 +2,7 @@ package com.b2bfintech.billing;
 
 import com.b2bfintech.common.spi.BillFetchFailedException;
 import com.b2bfintech.common.spi.BillingProvider;
+import com.b2bfintech.common.spi.BillingProvider.HttpBillFetch;
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -104,6 +105,26 @@ public class DummyBillingAdapter implements BillingProvider, BbpsProvider {
                 today.format(PERIOD_FORMAT),
                 buildBreakdown(amount, random),
                 null);
+    }
+
+    @Override
+    public HttpBillFetch fetchBillHttp(BbpsProvider.BillFetchCommand command) {
+        try {
+            FetchedBill bill = fetchBill(command);
+            String body = "{\"status\":\"SUCCESS\",\"statusCode\":\"200\",\"data\":{"
+                    + "\"billAmount\":\"" + (bill.amount() == null ? "" : bill.amount().toPlainString()) + "\","
+                    + "\"dueDate\":\"" + text(bill.dueDate()) + "\","
+                    + "\"billDate\":\"" + text(bill.billDate()) + "\","
+                    + "\"customerName\":\"" + text(bill.customerName()) + "\","
+                    + "\"billPeriod\":\"" + text(bill.billPeriod()) + "\"}}";
+            return new HttpBillFetch(200, body);
+        } catch (BillFetchFailedException ex) {
+            return new HttpBillFetch(400, "{\"status\":\"FAILED\",\"message\":\"fetch failed\"}");
+        }
+    }
+
+    private static String text(String value) {
+        return value == null ? "" : value.replace("\"", "");
     }
 
     /**

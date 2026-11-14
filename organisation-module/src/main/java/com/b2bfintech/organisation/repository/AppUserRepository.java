@@ -2,17 +2,29 @@ package com.b2bfintech.organisation.repository;
 
 import com.b2bfintech.organisation.entity.AppUser;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 
-public interface AppUserRepository extends JpaRepository<AppUser, UUID> {
-    Optional<AppUser> findByPhoneNumber(String phoneNumber);
+public interface AppUserRepository extends JpaRepository<AppUser, String> {
 
-    boolean existsByUserCode(String userCode);
+    @Query("SELECT u FROM AppUser u WHERE u.phone = :phone")
+    Optional<AppUser> findByPhoneNumber(@Param("phone") String phone);
 
-    List<AppUser> findByClientId(UUID clientId);
+    @Query("SELECT u FROM AppUser u WHERE u.phone = :identifier OR u.email = :identifier")
+    Optional<AppUser> findByPhoneNumberOrEmail(@Param("identifier") String identifier);
 
-    List<AppUser> findByBranchIdOrderByFullNameAsc(UUID branchId);
+    boolean existsByPhone(String phone);
+
+    boolean existsByEmail(String email);
+
+    boolean existsByEmailAndUserIdNot(String email, String userId);
+
+    boolean existsByUserType(AppUser.UserType userType);
+
+    List<AppUser> findByUserOrgId(String userOrgId);
+
+    List<AppUser> findByUserType(AppUser.UserType userType);
 }

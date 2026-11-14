@@ -12,8 +12,7 @@ import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.BranchMembershipRepository;
 import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.ClientService;
-import com.b2bfintech.platform.model.UserDirectoryEntry;
-import com.b2bfintech.platform.repository.UserDirectoryRepository;
+import com.b2bfintech.organisation.util.BranchIdGenerator;
 import jakarta.annotation.PostConstruct;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -41,7 +40,6 @@ public class BranchService {
     private final AppUserRepository appUserRepository;
     private final ClientService clientService;
     private final TenantUserProvisioningService provisioningService;
-    private final UserDirectoryRepository userDirectoryRepository;
     private final PasswordEncoder passwordEncoder;
     private final BillRepository billRepository;
 
@@ -51,7 +49,6 @@ public class BranchService {
             AppUserRepository appUserRepository,
             ClientService clientService,
             TenantUserProvisioningService provisioningService,
-            UserDirectoryRepository userDirectoryRepository,
             PasswordEncoder passwordEncoder,
             BillRepository billRepository) {
         this.branchRepository = branchRepository;
@@ -59,7 +56,6 @@ public class BranchService {
         this.appUserRepository = appUserRepository;
         this.clientService = clientService;
         this.provisioningService = provisioningService;
-        this.userDirectoryRepository = userDirectoryRepository;
         this.passwordEncoder = passwordEncoder;
         this.billRepository = billRepository;
     }
@@ -67,31 +63,34 @@ public class BranchService {
     /** Gives every branch user the shared password until invite-by-code is the only path again. */
     @PostConstruct
     public void applyDefaultPasswords() {
-        for (UserDirectoryEntry entry : userDirectoryRepository.findByRole("BRANCH_USER")) {
-            if (entry.passwordHash() != null && passwordEncoder.matches(DEFAULT_PASSWORD, entry.passwordHash())) {
+        for (AppUser user : appUserRepository.findByUserType(AppUser.UserType.CORP_USER)) {
+            if (membershipRepository.findBranchIdsByUserId(user.getUserId()).isEmpty()) {
                 continue;
             }
-            provisioningService.setUserPassword(entry.userId(), DEFAULT_PASSWORD);
+            if (user.getPassword() != null && passwordEncoder.matches(DEFAULT_PASSWORD, user.getPassword())) {
+                continue;
+            }
+            provisioningService.setUserPassword(user.getUserId(), DEFAULT_PASSWORD);
         }
     }
 
-    public List<Branch> list(UUID clientId) {
+    public List<Branch> list(String clientId) {
         requireCorporate(clientId);
-        return branchRepository.findByClientIdOrderByNameAsc(clientId);
+        return branchRepository.findBySourceIdOrderByNameAsc(clientId.toString());
     }
 
-    public Branch get(UUID clientId, UUID branchId) {
+    public Branch get(String clientId, String branchId) {
         Branch branch = branchRepository.findById(branchId)
                 .orElseThrow(() -> new ResourceNotFoundException("Branch not found"));
-        if (!branch.getClientId().equals(clientId)) {
+        if (!branch.ownedBy(clientId)) {
             throw new ResourceNotFoundException("Branch not found");
         }
         return branch;
     }
 
     /** One row per branch: bill count, user count, and whether anyone there can still sign in. */
-    public List<BranchOverview> overview(UUID clientId) {
-        Map<UUID, Long> billCounts = new HashMap<>();
+    public List<BranchOverview> overview(String clientId) {
+        Map<String, Long> billCounts = new HashMap<>();
         for (BillRepository.BranchBillCount row : billRepository.countGroupedByBranch(clientId)) {
             billCounts.put(row.getBranchId(), row.getBillCount());
         }
@@ -110,60 +109,62 @@ public class BranchService {
     public record BranchOverview(Branch branch, int userCount, long managedBillCount, String status) {
     }
 
-    public List<AppUser> users(UUID branchId) {
-        List<UUID> ids = membershipRepository.findUserIdsByBranchId(branchId);
+    public List<AppUser> users(String branchId) {
+        List<String> ids = membershipRepository.findUserIdsByBranchId(branchId);
         if (ids.isEmpty()) {
             return List.of();
         }
         return appUserRepository.findAllById(ids).stream()
-                .sorted(Comparator.comparing(user -> user.getFullName() == null ? "" : user.getFullName(), String.CASE_INSENSITIVE_ORDER))
+                .sorted(Comparator.comparing(user -> user.getName() == null ? "" : user.getName(), String.CASE_INSENSITIVE_ORDER))
                 .toList();
     }
 
     /** Corporate users who can be put on a branch. Pass a branch to leave out people already on it. */
-    public List<AppUser> pool(UUID clientId, UUID excludeBranchId) {
+    public List<AppUser> pool(String clientId, String excludeBranchId) {
         requireCorporate(clientId);
-        Set<UUID> taken = excludeBranchId == null
+        Set<String> taken = excludeBranchId == null
                 ? Set.of()
                 : new HashSet<>(membershipRepository.findUserIdsByBranchId(excludeBranchId));
-        return appUserRepository.findByClientId(clientId).stream()
-                .filter(user -> user.getStatus() == AppUser.UserStatus.ACTIVE)
+        return appUserRepository.findByUserOrgId(clientId.toString()).stream()
+                .filter(AppUser::isActive)
                 .filter(user -> user.getRole() != null && ASSIGNABLE_ROLES.contains(user.getRole().getName()))
-                .filter(user -> !taken.contains(user.getId()))
-                .sorted(Comparator.comparing(user -> user.getFullName() == null ? "" : user.getFullName(), String.CASE_INSENSITIVE_ORDER))
+                .filter(user -> !taken.contains(user.getUserId()))
+                .sorted(Comparator.comparing(user -> user.getName() == null ? "" : user.getName(), String.CASE_INSENSITIVE_ORDER))
                 .toList();
     }
 
-    public List<UUID> branchIdsFor(AuthenticatedUser principal) {
-        return membershipRepository.findBranchIdsByUserId(UUID.fromString(principal.userId()));
+    public List<String> branchIdsFor(AuthenticatedUser principal) {
+        return membershipRepository.findBranchIdsByUserId(principal.userId());
     }
 
-    public List<Branch> branchesForUser(UUID clientId, UUID userId) {
+    public List<Branch> branchesForUser(String clientId, String userId) {
         requireCorporate(clientId);
-        Set<UUID> ids = new HashSet<>(membershipRepository.findBranchIdsByUserId(userId));
-        return branchRepository.findByClientIdOrderByNameAsc(clientId).stream()
+        Set<String> ids = new HashSet<>(membershipRepository.findBranchIdsByUserId(userId));
+        return branchRepository.findBySourceIdOrderByNameAsc(clientId.toString()).stream()
                 .filter(branch -> ids.contains(branch.getId()))
                 .toList();
     }
 
     /** Branch users only see bills on branches they belong to. Everyone else sees the corporate. */
-    public boolean branchUserCanSee(AuthenticatedUser principal, UUID billBranchId) {
+    public boolean branchUserCanSee(AuthenticatedUser principal, String billBranchId) {
         if (principal == null || !"BRANCH_USER".equals(principal.role())) {
             return true;
         }
         if (billBranchId == null) {
             return false;
         }
-        return membershipRepository.existsByUserIdAndBranchId(UUID.fromString(principal.userId()), billBranchId);
+        return membershipRepository.existsByUserIdAndBranchId(principal.userId(), billBranchId);
     }
 
-    public boolean passwordSet(UUID userId) {
-        return userDirectoryRepository.hasPassword(userId);
+    public boolean passwordSet(String userId) {
+        return appUserRepository.findById(userId)
+                .map(user -> user.getPassword() != null && !user.getPassword().isBlank())
+                .orElse(false);
     }
 
     @Transactional
-    public Branch create(UUID clientId, String name, String address, String code, String comment,
-                         String phoneNumber, String userName, List<UUID> userIds) {
+    public Branch create(String clientId, String name, String address, String state, String location, String code,
+                         String phoneNumber, String userName, List<String> userIds) {
         Client client = requireActiveCorporate(clientId);
         boolean nameSet = blankToNull(userName) != null;
         boolean phoneSet = phoneNumber != null && !phoneNumber.isBlank();
@@ -171,14 +172,17 @@ public class BranchService {
             throw new BadRequestException(phoneSet ? "Enter a user name" : "Enter a 10-digit phone number");
         }
         Branch branch = new Branch();
-        branch.setClientId(clientId);
+        branch.setBranchId(newBranchId());
+        branch.setSourceType(Branch.SourceType.CORP);
+        branch.setSourceId(client.getId().toString());
         branch.setName(requiredName(name));
         branch.setAddress(blankToNull(address));
+        branch.setState(blankToNull(state));
+        branch.setLocation(blankToNull(location));
         branch.setCode(uniqueCode(clientId, code, null));
-        branch.setComment(blankToNull(comment));
         branch = branchRepository.save(branch);
         if (userIds != null) {
-            for (UUID userId : userIds) {
+            for (String userId : userIds) {
                 if (userId != null) {
                     assignUser(clientId, branch.getId(), userId);
                 }
@@ -191,35 +195,36 @@ public class BranchService {
     }
 
     @Transactional
-    public Branch update(UUID clientId, UUID branchId, String name, String address, String code, String comment) {
+    public Branch update(String clientId, String branchId, String name, String address, String state, String location, String code) {
         Branch branch = get(clientId, branchId);
         branch.setName(requiredName(name));
         branch.setAddress(blankToNull(address));
+        branch.setState(blankToNull(state));
+        branch.setLocation(blankToNull(location));
         branch.setCode(uniqueCode(clientId, code, branchId));
-        branch.setComment(blankToNull(comment));
         return branchRepository.save(branch);
     }
 
     @Transactional
-    public AppUser addUser(UUID clientId, UUID branchId, String phoneNumber, String userName) {
+    public AppUser addUser(String clientId, String branchId, String phoneNumber, String userName) {
         Client client = requireActiveCorporate(clientId);
         Branch branch = get(clientId, branchId);
         return addUser(client, branch, phoneNumber, userName);
     }
 
     @Transactional
-    public AppUser assignUser(UUID clientId, UUID branchId, UUID userId) {
+    public AppUser assignUser(String clientId, String branchId, String userId) {
         requireActiveCorporate(clientId);
         get(clientId, branchId);
         AppUser user = appUserRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        if (user.getClient() == null || !clientId.equals(user.getClient().getId())) {
+        if (user.organisationId() == null || !clientId.equals(user.organisationId())) {
             throw new BadRequestException("Choose a user from this corporate");
         }
         if (user.getRole() == null || !ASSIGNABLE_ROLES.contains(user.getRole().getName())) {
             throw new BadRequestException("Choose a user from this corporate");
         }
-        if (user.getStatus() != AppUser.UserStatus.ACTIVE) {
+        if (!user.isActive()) {
             throw new BadRequestException("This person cannot sign in");
         }
         if (membershipRepository.existsByUserIdAndBranchId(userId, branchId)) {
@@ -229,17 +234,16 @@ public class BranchService {
         membership.setUserId(userId);
         membership.setBranchId(branchId);
         membershipRepository.save(membership);
-        rememberBranch(user, branchId);
         return user;
     }
 
     @Transactional
-    public List<AppUser> assignUsers(UUID clientId, UUID branchId, List<UUID> userIds) {
+    public List<AppUser> assignUsers(String clientId, String branchId, List<String> userIds) {
         if (userIds == null || userIds.isEmpty()) {
             throw new BadRequestException("Choose a user");
         }
         List<AppUser> assigned = new ArrayList<>();
-        for (UUID userId : userIds) {
+        for (String userId : userIds) {
             if (userId != null) {
                 assigned.add(assignUser(clientId, branchId, userId));
             }
@@ -251,23 +255,11 @@ public class BranchService {
     }
 
     @Transactional
-    public void removeUser(UUID clientId, UUID branchId, UUID userId) {
+    public void removeUser(String clientId, String branchId, String userId) {
         get(clientId, branchId);
         BranchMembership membership = membershipRepository.findByUserIdAndBranchId(userId, branchId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         membershipRepository.delete(membership);
-        membershipRepository.flush();
-        AppUser user = appUserRepository.findById(userId).orElse(null);
-        if (user == null || !"BRANCH_USER".equals(user.getRole().getName()) || !branchId.equals(user.getBranchId())) {
-            return;
-        }
-        UUID next = membershipRepository.findBranchIdsByUserId(userId).stream()
-                .filter(id -> !branchId.equals(id))
-                .findFirst()
-                .orElse(null);
-        user.setBranchId(next);
-        appUserRepository.save(user);
-        userDirectoryRepository.updateBranchId(user.getId(), next);
     }
 
     private AppUser addUser(Client client, Branch branch, String phoneNumber, String userName) {
@@ -280,14 +272,11 @@ public class BranchService {
         }
         AppUser user = provisioningService.createClientUser(
                 phoneNumber, name, "BRANCH_USER", client, null, DEFAULT_PASSWORD);
-        user.setBranchId(branch.getId());
-        user = appUserRepository.save(user);
-        userDirectoryRepository.updateBranchId(user.getId(), branch.getId());
-        link(user.getId(), branch.getId());
+        link(user.getUserId(), branch.getId());
         return user;
     }
 
-    private void link(UUID userId, UUID branchId) {
+    private void link(String userId, String branchId) {
         if (membershipRepository.existsByUserIdAndBranchId(userId, branchId)) {
             return;
         }
@@ -297,17 +286,7 @@ public class BranchService {
         membershipRepository.save(membership);
     }
 
-    /** Keeps a single branch id on a branch user so login still has one. Other roles are not narrowed. */
-    private void rememberBranch(AppUser user, UUID branchId) {
-        if (user.getRole() == null || !"BRANCH_USER".equals(user.getRole().getName()) || user.getBranchId() != null) {
-            return;
-        }
-        user.setBranchId(branchId);
-        appUserRepository.save(user);
-        userDirectoryRepository.updateBranchId(user.getId(), branchId);
-    }
-
-    private Client requireActiveCorporate(UUID clientId) {
+    private Client requireActiveCorporate(String clientId) {
         Client client = requireCorporate(clientId);
         if (client.getStatus() != Client.ClientStatus.ACTIVE) {
             throw new BadRequestException("Branches can be added after the corporate is active");
@@ -315,7 +294,7 @@ public class BranchService {
         return client;
     }
 
-    private Client requireCorporate(UUID clientId) {
+    private Client requireCorporate(String clientId) {
         Client client = clientService.getById(clientId);
         if (client.getClientType() != Client.ClientType.CORPORATE) {
             throw new BadRequestException("A vendor does not have branches");
@@ -323,12 +302,22 @@ public class BranchService {
         return client;
     }
 
-    private String uniqueCode(UUID clientId, String code, UUID currentId) {
+    private String newBranchId() {
+        for (int attempt = 0; attempt < 8; attempt++) {
+            String candidate = BranchIdGenerator.generate();
+            if (!branchRepository.existsById(candidate)) {
+                return candidate;
+            }
+        }
+        throw new BadRequestException("Could not assign a branch id");
+    }
+
+    private String uniqueCode(String clientId, String code, String currentId) {
         String normalized = blankToNull(code);
         if (normalized == null) {
             return null;
         }
-        branchRepository.findByClientIdAndCode(clientId, normalized).ifPresent(existing -> {
+        branchRepository.findBySourceIdAndCode(clientId.toString(), normalized).ifPresent(existing -> {
             if (currentId == null || !currentId.equals(existing.getId())) {
                 throw new BadRequestException("Another branch already uses this code");
             }

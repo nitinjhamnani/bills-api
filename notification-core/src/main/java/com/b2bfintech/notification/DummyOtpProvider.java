@@ -25,7 +25,7 @@ public class DummyOtpProvider implements OtpProvider {
 
     @Override
     public void sendOtp(String phoneNumber) {
-        log.info("[DUMMY OTP] Would send OTP '{}' to {} (dummy provider - no real SMS sent)", fixedOtp, phoneNumber);
+        log.info("[DUMMY OTP] Would send a code to {} (dummy provider - no real SMS sent)", phoneNumber);
     }
 
     @Override

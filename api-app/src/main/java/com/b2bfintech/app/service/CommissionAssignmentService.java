@@ -6,38 +6,40 @@ import com.b2bfintech.billing.entity.BillPaymentLog;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.service.ClientService;
-import com.b2bfintech.organisation.service.CommissionRuleService;
+import com.b2bfintech.organisation.entity.Commission;
+import com.b2bfintech.organisation.service.CommissionService;
+import com.b2bfintech.platform.repository.CategoryOperatorRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 
 /**
- * After a corporate pays, the vendor with the highest live commission on the matching rule
- * is recorded on the payment. The percent is copied when that vendor marks the bill paid.
- * Bills that match nothing stay with Paytrix.
+ * After a corporate pays, the vendor with the highest approved, active commission for the bill's
+ * operator and amount takes the bill. Bills that match nothing stay with Paytrix.
  */
 @Service
 public class CommissionAssignmentService {
 
-    private final CommissionRuleService commissionRuleService;
+    private final CommissionService commissionService;
     private final ClientService clientService;
     private final BillPaymentRepository billPaymentRepository;
     private final BillActivityLogService activityLogService;
+    private final CategoryOperatorRepository operatorRepository;
 
     public CommissionAssignmentService(
-            CommissionRuleService commissionRuleService, ClientService clientService,
-            BillPaymentRepository billPaymentRepository, BillActivityLogService activityLogService) {
-        this.commissionRuleService = commissionRuleService;
+            CommissionService commissionService, ClientService clientService,
+            BillPaymentRepository billPaymentRepository, BillActivityLogService activityLogService,
+            CategoryOperatorRepository operatorRepository) {
+        this.commissionService = commissionService;
         this.clientService = clientService;
         this.billPaymentRepository = billPaymentRepository;
         this.activityLogService = activityLogService;
+        this.operatorRepository = operatorRepository;
     }
 
     @Transactional
@@ -47,64 +49,56 @@ public class CommissionAssignmentService {
 
     /** {@code excludedVendorIds} are vendors who already sent this payment back. */
     @Transactional
-    public void assignIfMatched(BillPayment payment, Bill bill, String actor, Set<UUID> excludedVendorIds) {
-        if (payment.getAssignedVendorClientId() != null || payment.getAmount() == null) {
+    public void assignIfMatched(BillPayment payment, Bill bill, String actor, Set<String> excludedVendorIds) {
+        if (payment.isWithVendor() || payment.getBillAmount() == null) {
             return;
         }
-        Set<UUID> excluded = excludedVendorIds == null ? Set.of() : excludedVendorIds;
-        Optional<CommissionRuleService.AssignmentOption> winner = commissionRuleService
-                .liveRates(bill.getProviderCategoryId(), bill.getProviderBillerId())
+        Set<String> excluded = excludedVendorIds == null ? Set.of() : excludedVendorIds;
+        Optional<Commission> winner = commissionService
+                .liveRates(bill.getCategoryId(), operatorId(bill))
                 .stream()
-                .filter(option -> !excluded.contains(option.vendorClientId()))
-                .filter(option -> option.range().contains(payment.getAmount()))
+                .filter(option -> !excluded.contains(option.getVendorId()))
+                .filter(option -> option.covers(payment.getBillAmount()))
                 .filter(this::vendorIsActive)
-                .max(Comparator.comparing(CommissionRuleService.AssignmentOption::commissionPercent)
-                        .thenComparing(CommissionRuleService.AssignmentOption::createdAt, Comparator.reverseOrder()));
+                .max(Comparator.comparing(Commission::getCommission)
+                        .thenComparing(Commission::getCreatedAt, Comparator.reverseOrder()));
         if (winner.isEmpty()) {
             return;
         }
-        CommissionRuleService.AssignmentOption rate = winner.get();
-        payment.setAssignedVendorClientId(rate.vendorClientId());
-        payment.setCommissionRuleId(rate.ruleId());
-        payment.setCommissionPercent(null);
-        payment.setCommissionAmount(null);
-        payment.setAssignedAt(Instant.now());
-        payment.setVendorStage(BillPayment.VendorStage.ASSIGNED);
+        Client vendor = clientService.getById(winner.get().getVendorId());
+        payment.assignToVendor(vendor.getId(), vendor.getClientName(), Instant.now());
         billPaymentRepository.save(payment);
-        Client vendor = clientService.getById(rate.vendorClientId());
         activityLogService.log(payment.getBillId(), payment.getId(), BillPaymentLog.EventType.ASSIGNED,
-                "Assigned to " + vendor.getClientName() + ". The commission is taken when the vendor marks the bill paid.",
-                actor);
+                "Assigned to " + vendor.getClientName() + ".", actor);
+        MoneyActionLog.record("assign", actor, payment.getId().toString());
     }
 
-    /** Waiting bills show the vendor's current rate. A marked or confirmed bill keeps the rate that was saved. */
+    /** The assigned vendor's best live commission that covers this bill and amount. */
     @Transactional(readOnly = true)
-    public CommissionQuote quote(BillPayment payment) {
-        if (payment.getOrgStatus() != BillPayment.OrgStatus.PENDING) {
-            return new CommissionQuote(payment.getCommissionPercent(), payment.getCommissionAmount());
+    public Optional<BigDecimal> currentPercent(BillPayment payment, Bill bill) {
+        if (!payment.isWithVendor() || payment.getBillAmount() == null) {
+            return Optional.empty();
         }
-        Optional<BigDecimal> percent = commissionRuleService.livePercent(
-                payment.getCommissionRuleId(), payment.getAssignedVendorClientId());
-        if (percent.isEmpty() || payment.getAmount() == null) {
-            return new CommissionQuote(null, null);
+        return commissionService.liveRates(bill.getCategoryId(), operatorId(bill)).stream()
+                .filter(option -> option.getVendorId().equals(payment.getBillAssignedToId()))
+                .filter(option -> option.covers(payment.getBillAmount()))
+                .map(Commission::getCommission)
+                .max(Comparator.naturalOrder());
+    }
+
+    private String operatorId(Bill bill) {
+        if (bill.getOperatorId() != null) {
+            return bill.getOperatorId();
         }
-        BigDecimal amount = payment.getAmount()
-                .multiply(percent.get())
-                .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
-        return new CommissionQuote(percent.get(), amount);
+        return operatorRepository.findActiveByCategory(bill.getCategoryId()).stream()
+                .filter(operator -> bill.getOperatorName().equals(operator.operatorName()))
+                .map(operator -> operator.operatorId())
+                .findFirst()
+                .orElse(null);
     }
 
-    /** The rate this vendor would pay now. Empty when the rule or the vendor is not live. */
-    @Transactional(readOnly = true)
-    public Optional<BigDecimal> livePercent(BillPayment payment) {
-        return commissionRuleService.livePercent(payment.getCommissionRuleId(), payment.getAssignedVendorClientId());
-    }
-
-    public record CommissionQuote(BigDecimal percent, BigDecimal amount) {
-    }
-
-    private boolean vendorIsActive(CommissionRuleService.AssignmentOption rate) {
-        return clientService.find(rate.vendorClientId())
+    private boolean vendorIsActive(Commission rate) {
+        return clientService.find(rate.getVendorId())
                 .filter(client -> client.getClientType() == Client.ClientType.VENDOR)
                 .filter(client -> client.getStatus() == Client.ClientStatus.ACTIVE)
                 .isPresent();

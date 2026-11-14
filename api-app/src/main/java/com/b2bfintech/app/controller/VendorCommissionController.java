@@ -3,26 +3,24 @@ package com.b2bfintech.app.controller;
 import com.b2bfintech.app.service.CategoryLabels;
 import com.b2bfintech.app.service.ClientAccountGuard;
 import com.b2bfintech.app.service.VendorPaymentService;
+import com.b2bfintech.app.service.VendorSettlementService;
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
+import com.b2bfintech.billing.entity.VendorPayment;
 import com.b2bfintech.billing.repository.BillRepository;
+import com.b2bfintech.billing.repository.VendorPaymentRepository;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.common.security.AuthenticatedUser;
 import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.service.ClientService;
-import com.b2bfintech.organisation.service.CommissionRuleService;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.DecimalMax;
-import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,10 +33,12 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/client")
@@ -46,33 +46,31 @@ import java.util.UUID;
 public class VendorCommissionController {
 
     private final VendorPaymentService vendorPaymentService;
+    private final VendorSettlementService vendorSettlementService;
     private final ClientAccountGuard clientAccountGuard;
     private final ClientService clientService;
     private final BillRepository billRepository;
     private final CategoryLabels categoryLabels;
+    private final VendorPaymentRepository vendorPaymentRepository;
 
     public VendorCommissionController(
-            VendorPaymentService vendorPaymentService,
+            VendorPaymentService vendorPaymentService, VendorSettlementService vendorSettlementService,
             ClientAccountGuard clientAccountGuard, ClientService clientService,
-            BillRepository billRepository, CategoryLabels categoryLabels) {
+            BillRepository billRepository, CategoryLabels categoryLabels,
+            VendorPaymentRepository vendorPaymentRepository) {
         this.vendorPaymentService = vendorPaymentService;
+        this.vendorSettlementService = vendorSettlementService;
         this.clientAccountGuard = clientAccountGuard;
         this.clientService = clientService;
         this.billRepository = billRepository;
         this.categoryLabels = categoryLabels;
+        this.vendorPaymentRepository = vendorPaymentRepository;
     }
 
-    @GetMapping("/commission-rules")
-    public List<CommissionRuleService.VendorRuleView> rules(@AuthenticationPrincipal AuthenticatedUser principal) {
-        throw new AccessDeniedException("A vendor cannot view commissions");
-    }
-
-    @PostMapping("/commission-rules/{id}/proposals")
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public CommissionRuleService.VendorRuleView propose(
-            @PathVariable UUID id, @Valid @RequestBody ProposeRequest request,
+    @GetMapping("/transactions")
+    public List<VendorSettlementService.VendorTransactionRow> transactions(
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        throw new AccessDeniedException("A vendor cannot view commissions");
+        return vendorSettlementService.transactions(vendor(principal).getId());
     }
 
     @GetMapping("/assigned-bills")
@@ -94,9 +92,10 @@ public class VendorCommissionController {
 
     @GetMapping("/assigned-bills/export")
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
-    public ResponseEntity<byte[]> exportAssigned(@AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
+    public ResponseEntity<byte[]> exportAssigned(
+            @RequestParam List<UUID> ids, @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
         Client vendor = clientAccountGuard.requireActiveVendor(vendor(principal).getId());
-        List<BillDtos.BillPaymentDto> rows = vendorPaymentService.sheetBills(vendor.getId()).stream()
+        List<BillDtos.BillPaymentDto> rows = vendorPaymentService.sheetBills(vendor.getId(), ids).stream()
                 .map(payment -> toDto(payment, vendor.getClientName()))
                 .toList();
         return ResponseEntity.ok()
@@ -108,15 +107,17 @@ public class VendorCommissionController {
     @PostMapping(value = "/assigned-bills/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
     public SheetPreview previewImport(
-            @RequestParam MultipartFile file, @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
+            @RequestParam MultipartFile file, @RequestParam List<UUID> ids,
+            @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
         Client vendor = clientAccountGuard.requireActiveVendor(vendor(principal).getId());
+        Set<UUID> selected = selected(vendor.getId(), ids);
         int inProgress = 0;
         int paid = 0;
         int unchanged = 0;
         List<SheetRowNote> errors = new ArrayList<>();
         for (VendorBillSheet.RawRow row : VendorBillSheet.read(file.getInputStream())) {
             VendorPaymentService.SheetDecision decision = vendorPaymentService.decide(
-                    vendor.getId(), row.paymentId(), row.status(), row.reference());
+                    vendor.getId(), row.paymentId(), row.status(), row.reference(), selected);
             if (decision.error() != null) {
                 errors.add(new SheetRowNote(row.row(), decision.error()));
             } else if ("IN_PROGRESS".equals(decision.action())) {
@@ -133,12 +134,14 @@ public class VendorCommissionController {
     @PostMapping(value = "/assigned-bills/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
     public List<BillDtos.BulkRowResult> importAssigned(
-            @RequestParam MultipartFile file, @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
+            @RequestParam MultipartFile file, @RequestParam List<UUID> ids,
+            @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
         Client vendor = clientAccountGuard.requireActiveVendor(vendor(principal).getId());
+        Set<UUID> selected = selected(vendor.getId(), ids);
         List<BillDtos.BulkRowResult> results = new ArrayList<>();
         for (VendorBillSheet.RawRow row : VendorBillSheet.read(file.getInputStream())) {
             VendorPaymentService.SheetDecision decision = vendorPaymentService.decide(
-                    vendor.getId(), row.paymentId(), row.status(), row.reference());
+                    vendor.getId(), row.paymentId(), row.status(), row.reference(), selected);
             if (decision.error() != null) {
                 results.add(new BillDtos.BulkRowResult(row.row(), false, row.paymentId(), decision.error()));
                 continue;
@@ -147,12 +150,7 @@ public class VendorCommissionController {
                 continue;
             }
             try {
-                if ("IN_PROGRESS".equals(decision.action())) {
-                    vendorPaymentService.markInProgress(vendor.getId(), UUID.fromString(row.paymentId().trim()), principal.phoneNumber());
-                } else {
-                    vendorPaymentService.markPaidFromSheet(
-                            vendor.getId(), UUID.fromString(row.paymentId().trim()), row.reference(), principal.phoneNumber());
-                }
+                vendorPaymentService.markInProgress(vendor.getId(), UUID.fromString(row.paymentId().trim()), principal.phoneNumber());
                 results.add(new BillDtos.BulkRowResult(row.row(), true, row.paymentId(), null));
             } catch (RuntimeException ex) {
                 results.add(new BillDtos.BulkRowResult(row.row(), false, row.paymentId(), ex.getMessage()));
@@ -161,13 +159,17 @@ public class VendorCommissionController {
         return results;
     }
 
-    @PostMapping("/assigned-bills/{id}/mark-paid")
+    @PostMapping(value = "/assigned-bills/{id}/mark-paid", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('CLIENT_ADMIN')")
     public BillDtos.BillPaymentDto markPaid(
-            @PathVariable UUID id, @Valid @RequestBody MarkPaidRequest request,
+            @PathVariable UUID id,
+            @RequestParam(required = false) String transactionReference,
+            @RequestParam(required = false) String bbpsReference,
+            @RequestParam(required = false) MultipartFile proof,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         Client vendor = clientAccountGuard.requireActiveVendor(vendor(principal).getId());
-        BillPayment payment = vendorPaymentService.markPaid(vendor.getId(), id, request.reference(), principal.phoneNumber());
+        BillPayment payment = vendorPaymentService.markPaid(
+                vendor.getId(), id, transactionReference, bbpsReference, proof, principal.phoneNumber());
         return toDto(payment, vendor.getClientName());
     }
 
@@ -196,27 +198,30 @@ public class VendorCommissionController {
     private BillDtos.BillPaymentDto toDto(BillPayment payment, String vendorName) {
         Bill bill = billRepository.findById(payment.getBillId())
                 .orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
-        return BillDtos.BillPaymentDto.from(
+        BillDtos.BillPaymentDto dto = BillDtos.BillPaymentDto.from(
                 payment, bill, categoryLabels.lookup(), false, false, id -> vendorName,
                 null, null);
+        return vendorPaymentRepository.findByBillPaymentId(payment.getId())
+                .filter(owed -> owed.getPaymentStatus() == VendorPayment.PaymentStatus.PAID)
+                .map(owed -> dto.withReimbursedAt(owed.getPaymentMadeOn()))
+                .orElse(dto);
+    }
+
+    private Set<UUID> selected(String vendorClientId, List<UUID> ids) {
+        return vendorPaymentService.sheetBills(vendorClientId, ids).stream()
+                .map(BillPayment::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private Client vendor(AuthenticatedUser principal) {
         if (principal.clientId() == null || principal.clientId().isBlank()) {
             throw new BadRequestException("This action is only available to a vendor");
         }
-        Client client = clientService.getById(UUID.fromString(principal.clientId()));
+        Client client = clientService.getById(principal.clientId());
         if (client.getClientType() != Client.ClientType.VENDOR) {
             throw new BadRequestException("Only a vendor can do this");
         }
         return client;
-    }
-
-    public record ProposeRequest(
-            @NotNull @DecimalMin("0.001") @DecimalMax("100") BigDecimal commissionPercent) {
-    }
-
-    public record MarkPaidRequest(@NotBlank @Size(max = 120) String reference) {
     }
 
     public record RejectRequest(@NotBlank @Size(max = 300) String reason) {

@@ -42,14 +42,14 @@ public class ClientCategoryController {
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
-    public List<ClientCategoryDto> list(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+    public List<ClientCategoryDto> list(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return visible(clientId);
     }
 
     @PutMapping("/{categoryId}")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public ClientCategoryDto set(@PathVariable UUID clientId, @PathVariable String categoryId,
+    public ClientCategoryDto set(@PathVariable String clientId, @PathVariable String categoryId,
                                  @RequestBody OrganisationCategoryController.EnabledRequest request,
                                  @AuthenticationPrincipal AuthenticatedUser principal) {
         BbpsCategory category = categoryRepository.findActiveByCategoryId(categoryId)
@@ -59,7 +59,7 @@ public class ClientCategoryController {
         return new ClientCategoryDto(category.categoryId(), category.name(), request.enabled());
     }
 
-    private List<ClientCategoryDto> visible(UUID clientId) {
+    private List<ClientCategoryDto> visible(String clientId) {
         Set<String> organisationEnabled = enablementService.listOrganisation().stream()
                 .filter(OrganisationCategoryConfig::isEnabled)
                 .map(OrganisationCategoryConfig::getCategoryId)

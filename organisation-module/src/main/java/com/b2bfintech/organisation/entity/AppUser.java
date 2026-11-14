@@ -4,22 +4,16 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.Instant;
-import java.util.UUID;
 
-/** A user within one tenant (organisation admin, maker/checker, client admin/operator, etc.). */
+/** A person who can sign in. Paytrix, a corporate, or a vendor, told apart by {@link #userType}. */
 @Entity
 @Table(name = "app_user")
 @Getter
@@ -27,63 +21,127 @@ import java.util.UUID;
 @NoArgsConstructor
 public class AppUser {
 
+    public static final String PAYTRIX = "PAYTRIX";
+
     @Id
-    @GeneratedValue
-    private UUID id;
+    @Column(name = "user_id", nullable = false, length = 6)
+    private String userId;
 
-    @Column(name = "phone_number", nullable = false, unique = true)
-    private String phoneNumber;
+    @Column(nullable = false, length = 150)
+    private String name;
 
-    /** Random 6-character code. Activity logs are signed with this, not the phone number. */
-    @Column(name = "user_code", nullable = false, unique = true, length = 6)
-    private String userCode;
-
-    @Column(name = "full_name", nullable = false)
-    private String fullName;
-
-    /** Optional alternate login identifier; the actual password hash lives only in platform.user_directory. */
-    @Column(name = "email", unique = true)
+    @Column(unique = true, length = 150)
     private String email;
 
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "role_id", nullable = false)
-    private Role role;
+    @Column(nullable = false, unique = true, length = 15)
+    private String phone;
 
-    /** Set only for CLIENT_ADMIN / CLIENT_OPERATOR / BRANCH_USER - which client they belong to. */
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "client_id")
-    private Client client;
+    @Column(name = "created_by_type", length = 32)
+    private String createdByType;
 
-    /**
-     * One branch a BRANCH_USER can open, kept so an existing login still carries a branch.
-     * The branches they can actually use are the rows in branch_user, which can be several.
-     */
-    @Column(name = "branch_id")
-    private UUID branchId;
+    @Column(name = "created_by_id", length = 6)
+    private String createdById;
+
+    @Column(name = "created_on", nullable = false, updatable = false)
+    private Instant createdOn;
+
+    @Column(name = "is_active", nullable = false)
+    private boolean active = true;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "user_type", nullable = false, length = 32)
+    private UserType userType;
+
+    public boolean hasUserType(UserType type) {
+        return type != null && type == userType;
+    }
+
+    /** {@code PAYTRIX}, or the id of the corporate or vendor this person belongs to. */
+    @Column(name = "user_org_id", nullable = false, length = 64)
+    private String userOrgId;
+
     @Column(nullable = false)
-    private UserStatus status = UserStatus.ACTIVE;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
-
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
+    private String password;
 
     @PrePersist
     void onCreate() {
-        Instant now = Instant.now();
-        createdAt = now;
-        updatedAt = now;
+        if (createdOn == null) {
+            createdOn = Instant.now();
+        }
     }
 
-    @PreUpdate
-    void onUpdate() {
-        updatedAt = Instant.now();
+    public boolean isPaytrix() {
+        return userOrgId == null || PAYTRIX.equals(userOrgId);
+    }
+
+    /** The corporate or vendor id. Empty for a Paytrix person. */
+    public String organisationId() {
+        return isPaytrix() ? null : userOrgId;
+    }
+
+    /** Screens and the login token still use the previous role names. */
+    public LegacyRole getRole() {
+        return userType == null ? null : new LegacyRole(UserTypes.legacyRole(userType));
+    }
+
+    public UserStatus getStatus() {
+        return active ? UserStatus.ACTIVE : UserStatus.SUSPENDED;
+    }
+
+    public void setStatus(UserStatus status) {
+        this.active = status != UserStatus.SUSPENDED;
+    }
+
+    public String getId() {
+        return userId;
+    }
+
+    public String getUserCode() {
+        return userId;
+    }
+
+    public String getFullName() {
+        return name;
+    }
+
+    public void setFullName(String name) {
+        this.name = name;
+    }
+
+    public String getPhoneNumber() {
+        return phone;
+    }
+
+    public void setPhoneNumber(String phone) {
+        this.phone = phone;
+    }
+
+    public enum UserType {
+        ORG_SUPERADMIN,
+        ORG_ADMIN,
+        ORG_USER,
+        CORP_ADMIN,
+        CORP_USER,
+        VENDOR_ADMIN,
+        VENDOR_USER,
+        ORG_MAKER,
+        ORG_CHECKER,
+        ORG_SALES
     }
 
     public enum UserStatus {
         ACTIVE, SUSPENDED
+    }
+
+    public static final class LegacyRole {
+        private final String name;
+
+        public LegacyRole(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
     }
 }

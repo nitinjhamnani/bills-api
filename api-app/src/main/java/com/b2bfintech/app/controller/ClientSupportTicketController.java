@@ -31,37 +31,37 @@ public class ClientSupportTicketController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public TicketDto raise(@PathVariable UUID clientId, @Valid @RequestBody RaiseRequest request,
+    public TicketDto raise(@PathVariable String clientId, @Valid @RequestBody RaiseRequest request,
                             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         SupportTicket ticket = service.raise(
                 clientId, request.subject(), request.description(), principal.phoneNumber(),
-                parseUserId(principal), actorName(principal));
+                principal.userId(), actorName(principal));
         return toDto(ticket, principal, false);
     }
 
     @GetMapping
-    public List<TicketDto> list(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+    public List<TicketDto> list(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         List<SupportTicket> tickets = service.listForClient(clientId);
         List<UUID> ids = tickets.stream().map(SupportTicket::getId).toList();
         Map<UUID, SupportTicketMessage> latest = service.latestMessages(ids);
         Map<UUID, Boolean> unread = service.unreadByTicket(
-                parseUserId(principal), SupportTicketMessage.AuthorSide.ORGANISATION, ids);
+                principal.userId(), SupportTicketMessage.AuthorSide.ORGANISATION, ids);
         return tickets.stream()
                 .map(t -> TicketDto.from(t, latest.get(t.getId()), unread.getOrDefault(t.getId(), false)))
                 .toList();
     }
 
     @GetMapping("/unread-summary")
-    public UnreadSummaryDto unreadSummary(@PathVariable UUID clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
+    public UnreadSummaryDto unreadSummary(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return new UnreadSummaryDto(service.unreadTicketCount(
-                parseUserId(principal), SupportTicketMessage.AuthorSide.ORGANISATION, service.listForClient(clientId)));
+                principal.userId(), SupportTicketMessage.AuthorSide.ORGANISATION, service.listForClient(clientId)));
     }
 
     @GetMapping("/{id}")
-    public TicketDto get(@PathVariable UUID clientId, @PathVariable UUID id,
+    public TicketDto get(@PathVariable String clientId, @PathVariable UUID id,
                           @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         SupportTicket ticket = service.getForClient(clientId, id);
@@ -69,27 +69,27 @@ public class ClientSupportTicketController {
     }
 
     @GetMapping("/{id}/messages")
-    public List<MessageDto> listMessages(@PathVariable UUID clientId, @PathVariable UUID id,
+    public List<MessageDto> listMessages(@PathVariable String clientId, @PathVariable UUID id,
                                           @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        return service.listMessagesForClient(clientId, id, parseUserId(principal)).stream().map(MessageDto::from).toList();
+        return service.listMessagesForClient(clientId, id, principal.userId()).stream().map(MessageDto::from).toList();
     }
 
     @PostMapping("/{id}/messages")
     @ResponseStatus(HttpStatus.CREATED)
-    public MessageDto postMessage(@PathVariable UUID clientId, @PathVariable UUID id,
+    public MessageDto postMessage(@PathVariable String clientId, @PathVariable UUID id,
                                    @Valid @RequestBody MessageRequest request,
                                    @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return MessageDto.from(service.addClientMessage(
-                clientId, id, parseUserId(principal), actorName(principal), request.body()));
+                clientId, id, principal.userId(), actorName(principal), request.body()));
     }
 
     private TicketDto toDto(SupportTicket ticket, AuthenticatedUser principal, Boolean unreadOverride) {
         boolean unread = unreadOverride != null
                 ? unreadOverride
                 : service.unreadByTicket(
-                        parseUserId(principal),
+                        principal.userId(),
                         SupportTicketMessage.AuthorSide.ORGANISATION,
                         List.of(ticket.getId())
                 ).getOrDefault(ticket.getId(), false);
@@ -123,16 +123,8 @@ public class ClientSupportTicketController {
         static MessageDto from(SupportTicketMessage m) {
             return new MessageDto(
                     m.getId().toString(), m.getTicketId().toString(), m.getAuthorSide().name(),
-                    m.getAuthorUserId() == null ? null : m.getAuthorUserId().toString(),
+                    m.getAuthorUserId(),
                     m.getAuthorName(), m.getBody(), m.getCreatedAt());
-        }
-    }
-
-    private static UUID parseUserId(AuthenticatedUser principal) {
-        try {
-            return UUID.fromString(principal.userId());
-        } catch (IllegalArgumentException ex) {
-            return null;
         }
     }
 

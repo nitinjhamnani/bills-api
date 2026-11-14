@@ -18,12 +18,9 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * One client has one of these: the wallet that funds its bill payments (implementation plan
- * &sect;6).
- */
+/** The one wallet a corporate or a vendor holds. */
 @Entity
-@Table(name = "wallet_account", uniqueConstraints = @UniqueConstraint(columnNames = {"client_id", "wallet_type"}))
+@Table(name = "wallet", uniqueConstraints = @UniqueConstraint(columnNames = {"wallet_user_type", "wallet_user_id"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -33,34 +30,41 @@ public class WalletAccount {
     @GeneratedValue
     private UUID id;
 
-    @Column(name = "client_id", nullable = false)
-    private UUID clientId;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "wallet_type", nullable = false)
-    private WalletType walletType;
-
     @Column(nullable = false, precision = 14, scale = 2)
     private BigDecimal balance = BigDecimal.ZERO;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
+    @Column(name = "is_active", nullable = false)
+    private boolean active = true;
 
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "wallet_user_type", nullable = false, length = 8)
+    private UserType walletUserType;
+
+    @Column(name = "wallet_user_id", nullable = false, length = 8)
+    private String walletUserId;
+
+    @Column(name = "last_updated_at", nullable = false)
+    private Instant lastUpdatedAt;
 
     @PrePersist
-    void onCreate() {
-        Instant now = Instant.now();
-        createdAt = now;
-        updatedAt = now;
-    }
-
     @PreUpdate
-    void onUpdate() {
-        updatedAt = Instant.now();
+    void touch() {
+        lastUpdatedAt = Instant.now();
     }
 
+    public String getClientId() {
+        return walletUserId;
+    }
+
+    public WalletType getWalletType() {
+        return WalletType.WALLET;
+    }
+
+    public enum UserType {
+        CORP, VENDOR
+    }
+
+    /** Each owner has a single wallet. Kept so balance and ledger calls read the same as before. */
     public enum WalletType {
         WALLET
     }

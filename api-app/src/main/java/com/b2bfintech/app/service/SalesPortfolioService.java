@@ -50,7 +50,7 @@ public class SalesPortfolioService {
     }
 
     @Transactional(readOnly = true)
-    public SalesDashboard dashboard(UUID salesUserId) {
+    public SalesDashboard dashboard(String salesUserId) {
         Instant monthStart = LocalDate.now(IST).withDayOfMonth(1).atStartOfDay(IST).toInstant();
         Instant nextMonth = LocalDate.now(IST).withDayOfMonth(1).plusMonths(1).atStartOfDay(IST).toInstant();
         List<CorporateSummary> corporates = ownedCorporates(salesUserId).stream()
@@ -77,14 +77,14 @@ public class SalesPortfolioService {
      * A missing client list means every corporate assigned to this person. Any other id is ignored.
      */
     @Transactional(readOnly = true)
-    public SalesPaidReport paidInRange(UUID salesUserId, Instant from, Instant to, List<UUID> clientIds) {
+    public SalesPaidReport paidInRange(String salesUserId, Instant from, Instant to, List<String> clientIds) {
         List<Client> corporates = ownedCorporates(salesUserId);
         if (clientIds != null && !clientIds.isEmpty()) {
-            Set<UUID> requested = new HashSet<>(clientIds);
+            Set<String> requested = new HashSet<>(clientIds);
             corporates = corporates.stream().filter(client -> requested.contains(client.getId())).toList();
         }
         List<BillPayment> matched = new ArrayList<>();
-        Map<UUID, Client> owners = corporates.stream().collect(Collectors.toMap(Client::getId, Function.identity()));
+        Map<String, Client> owners = corporates.stream().collect(Collectors.toMap(Client::getId, Function.identity()));
         for (Client client : corporates) {
             for (BillPayment payment : billPaymentRepository.findByClientIdOrderByCreatedAtDesc(client.getId())) {
                 if (paidIn(payment, from, to)) {
@@ -93,8 +93,8 @@ public class SalesPortfolioService {
             }
         }
         matched.sort(Comparator.comparing(BillPayment::getClientPaidAt, Comparator.nullsLast(Comparator.reverseOrder())));
-        Map<UUID, Bill> bills = billsById(matched);
-        Map<UUID, Client> vendors = vendorsById(matched);
+        Map<String, Bill> bills = billsById(matched);
+        Map<String, Client> vendors = vendorsById(matched);
         List<SalesPaidBill> rows = matched.stream()
                 .map(payment -> toPaidBill(
                         payment,
@@ -107,41 +107,41 @@ public class SalesPortfolioService {
     }
 
     @Transactional(readOnly = true)
-    public CorporateSummary corporate(UUID salesUserId, UUID clientId) {
+    public CorporateSummary corporate(String salesUserId, String clientId) {
         Instant monthStart = LocalDate.now(IST).withDayOfMonth(1).atStartOfDay(IST).toInstant();
         Instant nextMonth = LocalDate.now(IST).withDayOfMonth(1).plusMonths(1).atStartOfDay(IST).toInstant();
         return summarize(requireOwned(salesUserId, clientId), monthStart, nextMonth);
     }
 
     @Transactional(readOnly = true)
-    public List<SalesBill> bills(UUID salesUserId, UUID clientId) {
+    public List<SalesBill> bills(String salesUserId, String clientId) {
         Client client = requireOwned(salesUserId, clientId);
         List<BillPayment> payments = billPaymentRepository.findByClientIdOrderByCreatedAtDesc(client.getId());
-        Map<UUID, Bill> bills = billsById(payments);
+        Map<String, Bill> bills = billsById(payments);
         return payments.stream().map(payment -> toBill(payment, bills.get(payment.getBillId()))).toList();
     }
 
-    private Map<UUID, Bill> billsById(List<BillPayment> payments) {
+    private Map<String, Bill> billsById(List<BillPayment> payments) {
         return billRepository.findAllById(payments.stream().map(BillPayment::getBillId).collect(Collectors.toSet()))
                 .stream()
                 .collect(Collectors.toMap(Bill::getId, Function.identity()));
     }
 
-    private Map<UUID, Client> vendorsById(List<BillPayment> payments) {
-        Set<UUID> ids = payments.stream()
+    private Map<String, Client> vendorsById(List<BillPayment> payments) {
+        Set<String> ids = payments.stream()
                 .map(BillPayment::getAssignedVendorClientId)
                 .filter(id -> id != null)
                 .collect(Collectors.toSet());
         return clientService.findByIds(ids).stream().collect(Collectors.toMap(Client::getId, Function.identity()));
     }
 
-    private List<Client> ownedCorporates(UUID salesUserId) {
+    private List<Client> ownedCorporates(String salesUserId) {
         return clientService.listForSalesPerson(salesUserId).stream()
                 .filter(client -> client.getClientType() == Client.ClientType.CORPORATE)
                 .toList();
     }
 
-    private Client requireOwned(UUID salesUserId, UUID clientId) {
+    private Client requireOwned(String salesUserId, String clientId) {
         Client client = clientService.getById(clientId);
         if (client.getClientType() != Client.ClientType.CORPORATE || !salesUserId.equals(client.getSalesUserId())) {
             throw new ResourceNotFoundException("Client not found");
@@ -191,7 +191,7 @@ public class SalesPortfolioService {
             return "Active";
         }
         ClientOnboarding onboarding = onboardingService.get(client.getId());
-        if (onboarding.getDetailsSubmittedAt() == null) {
+        if (onboarding.getKycStatus() == ClientOnboarding.KycStatus.NOT_STARTED) {
             return client.getCorporateKind() == Client.CorporateKind.INDIVIDUAL ? "Details pending" : "Company pending";
         }
         if (onboarding.getKycStatus() != ClientOnboarding.KycStatus.COMPLETE) {
@@ -201,9 +201,6 @@ public class SalesPortfolioService {
     }
 
     static String stageOf(BillPayment payment) {
-        if (payment.getOrgStatus() == BillPayment.OrgStatus.NA) {
-            return "Unpaid";
-        }
         BillPayment.VendorStage stage = payment.getVendorStage();
         if (stage == BillPayment.VendorStage.ASSIGNED) {
             return "Assigned";
@@ -217,7 +214,7 @@ public class SalesPortfolioService {
         if (stage == BillPayment.VendorStage.VERIFIED) {
             return "Ready to pay vendor";
         }
-        if (stage == BillPayment.VendorStage.REIMBURSED || payment.getOrgStatus() == BillPayment.OrgStatus.PAID) {
+        if (payment.getOrgStatus() == BillPayment.OrgStatus.PAID) {
             return "Reimbursed";
         }
         return "Waiting for check";
@@ -225,8 +222,7 @@ public class SalesPortfolioService {
 
     private static boolean paidIn(BillPayment payment, Instant from, Instant to) {
         Instant paidAt = payment.getClientPaidAt();
-        return payment.getOrgStatus() != BillPayment.OrgStatus.NA
-                && paidAt != null
+        return paidAt != null
                 && !paidAt.isBefore(from)
                 && paidAt.isBefore(to);
     }
@@ -245,7 +241,7 @@ public class SalesPortfolioService {
                 vendor == null ? null : vendor.getClientCode(),
                 billerName,
                 consumerNumber,
-                payment.getBillNumber(),
+                null,
                 money(payment.getAmount()),
                 payment.getDueDate(),
                 payment.getClientPaidAt(),
@@ -281,9 +277,6 @@ public class SalesPortfolioService {
                 case "Waiting for check" -> waitingForCheck++;
                 case "Ready to pay vendor" -> waitingToPay++;
                 default -> reimbursed++;
-            }
-            if (payment.getOrgStatus() == BillPayment.OrgStatus.NA) {
-                return;
             }
             BigDecimal amount = payment.getAmount() == null ? BigDecimal.ZERO : payment.getAmount();
             businessCount++;

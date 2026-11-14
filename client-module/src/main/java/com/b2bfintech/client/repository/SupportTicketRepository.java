@@ -7,6 +7,6 @@ import java.util.List;
 import java.util.UUID;
 
 public interface SupportTicketRepository extends JpaRepository<SupportTicket, UUID> {
-    List<SupportTicket> findByClientIdOrderByCreatedAtDesc(UUID clientId);
+    List<SupportTicket> findByClientIdOrderByCreatedAtDesc(String clientId);
     List<SupportTicket> findAllByOrderByCreatedAtDesc();
 }

@@ -34,7 +34,7 @@ public class OrganisationClientBillPaymentsController {
     }
 
     @GetMapping
-    public List<BillDtos.BillPaymentDto> list(@PathVariable UUID clientId) {
+    public List<BillDtos.BillPaymentDto> list(@PathVariable String clientId) {
         Function<String, String> names = categoryLabels.lookup();
         return billPaymentRepository.findByClientIdOrderByCreatedAtDesc(clientId).stream()
                 .map(p -> {
