@@ -3,8 +3,10 @@ package com.b2bfintech.app.service;
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPaymentLog;
 import com.b2bfintech.billing.repository.BillRepository;
+import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
+import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.ObjectProvider;
@@ -17,13 +19,14 @@ import com.b2bfintech.platform.model.BbpsCategory;
 import com.b2bfintech.platform.repository.BbpsCategoryRepository;
 
 import java.security.SecureRandom;
+import java.util.List;
 import java.util.Map;
 
 /**
  * Managed Bills: creating one inserts the {@code bill} row immediately (PROCESSING) and returns it.
  * The provider fetch runs after that transaction commits, on a background thread, and
- * {@link BillFetchResolutionService} writes the real status. Re-creating a bill that already
- * exists for this client, category, and account starts another fetch on that same row.
+ * {@link BillFetchResolutionService} writes the real status. A corporate can manage each account
+ * number once. The same primary parameter value cannot be added again on any branch.
  */
 @Service
 public class ManagedBillService {
@@ -37,6 +40,7 @@ public class ManagedBillService {
     private final ClientAccountGuard clientAccountGuard;
     private final ObjectProvider<BbpsProvider> billProviders;
     private final BbpsCategoryRepository categoryRepository;
+    private final BranchRepository branchRepository;
     private static final SecureRandom IDS = new SecureRandom();
     private static final char[] ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".toCharArray();
 
@@ -45,7 +49,7 @@ public class ManagedBillService {
             BillFetchResolutionService fetchResolutionService, AsyncBillFetch asyncBillFetch,
             BillActivityLogService activityLogService, ObjectMapper objectMapper,
             ClientAccountGuard clientAccountGuard, ObjectProvider<BbpsProvider> billProviders,
-            BbpsCategoryRepository categoryRepository) {
+            BbpsCategoryRepository categoryRepository, BranchRepository branchRepository) {
         this.billRepository = billRepository;
         this.categoryEnablementService = categoryEnablementService;
         this.fetchResolutionService = fetchResolutionService;
@@ -55,6 +59,7 @@ public class ManagedBillService {
         this.clientAccountGuard = clientAccountGuard;
         this.billProviders = billProviders;
         this.categoryRepository = categoryRepository;
+        this.branchRepository = branchRepository;
     }
 
     @Transactional
@@ -66,20 +71,16 @@ public class ManagedBillService {
         BbpsCategory category = categoryRepository.findActiveByCategoryId(categoryId)
                 .orElseThrow(() -> new com.b2bfintech.common.exception.BadRequestException("Unknown category: " + categoryId));
 
-        Bill bill = billRepository
-                .findFirstBySourceIdAndCategoryNameAndOperatorNameAndPrimaryParamValue(
-                        clientId, category.name(), billerName, primaryParamValue)
-                .orElseGet(Bill::new);
-        boolean isNew = bill.getId() == null;
-        if (!isNew && bill.getBranchId() != null && !branchId.equals(bill.getBranchId())) {
-            throw new com.b2bfintech.common.exception.BadRequestException("This bill already belongs to another branch");
+        String accountNumber = primaryParamValue == null ? "" : primaryParamValue.trim();
+        if (accountNumber.isEmpty()) {
+            throw new BadRequestException("Enter the account number");
         }
+        rejectDuplicateAccount(clientId, accountNumber);
 
-        if (isNew) {
-            bill.setBillId(newBillId());
-            bill.setSourceType(Bill.SourceType.CORP);
-            bill.setUserId(userId);
-        }
+        Bill bill = new Bill();
+        bill.setBillId(newBillId());
+        bill.setSourceType(Bill.SourceType.CORP);
+        bill.setUserId(userId);
         bill.setSourceId(clientId);
         bill.setBranchId(branchId);
         bill.setCategoryId(category.id());
@@ -87,16 +88,34 @@ public class ManagedBillService {
         bill.setOperatorName(billerName);
         bill.setOperatorId(billerId);
         bill.setPrimaryParamName(primaryParamName);
-        bill.setPrimaryParamValue(primaryParamValue);
+        bill.setPrimaryParamValue(accountNumber);
         bill.setCustomerMobile(customerMobile);
-        bill.setInputParamJson(writeParameters(parameters));
-        bill = billRepository.save(bill);
-        if (isNew) {
-            activityLogService.log(bill.getId(), null, BillPaymentLog.EventType.CREATED, "Bill created", userId);
-            MoneyActionLog.record("create", userId, bill.getId());
+        Map<String, String> stored = parameters == null ? new java.util.HashMap<>() : new java.util.HashMap<>(parameters);
+        stored.put(primaryParamName, accountNumber);
+        bill.setInputParamJson(writeParameters(stored));
+        try {
+            bill = billRepository.saveAndFlush(bill);
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            throw new BadRequestException("This account number is already managed for this company.");
         }
+        activityLogService.log(bill.getId(), null, BillPaymentLog.EventType.CREATED, "Bill created", userId);
+        MoneyActionLog.record("create", userId, bill.getId());
         scheduleFetch(clientId, bill.getId());
         return bill;
+    }
+
+    private void rejectDuplicateAccount(String clientId, String accountNumber) {
+        List<Bill> existing = billRepository.findByClientAndPrimaryParamValue(clientId, accountNumber);
+        if (existing.isEmpty()) {
+            return;
+        }
+        String branchName = branchRepository.findById(existing.get(0).getBranchId())
+                .map(branch -> branch.getName())
+                .filter(name -> name != null && !name.isBlank())
+                .orElse(null);
+        throw new BadRequestException(branchName == null
+                ? "This account number is already managed for this company."
+                : "This account number is already managed on the " + branchName + " branch.");
     }
 
     private String newBillId() {

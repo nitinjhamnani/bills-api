@@ -145,6 +145,21 @@ public class BranchService {
                 .toList();
     }
 
+    /**
+     * The role shown on screen. A company user who belongs to a branch signs in as a branch user.
+     * Their stored type is still the shared company-user type, which would otherwise look like an operator.
+     */
+    public String screenRole(AppUser user) {
+        if (user == null || user.getRole() == null) {
+            return null;
+        }
+        String role = user.getRole().getName();
+        if ("CLIENT_OPERATOR".equals(role) && !membershipRepository.findBranchIdsByUserId(user.getUserId()).isEmpty()) {
+            return "BRANCH_USER";
+        }
+        return role;
+    }
+
     /** Branch users only see bills on branches they belong to. Everyone else sees the corporate. */
     public boolean branchUserCanSee(AuthenticatedUser principal, String billBranchId) {
         if (principal == null || !"BRANCH_USER".equals(principal.role())) {

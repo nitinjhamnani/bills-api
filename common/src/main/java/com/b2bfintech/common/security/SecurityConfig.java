@@ -93,13 +93,15 @@ public class SecurityConfig {
         if (path.startsWith("/api/v1/paytrix/") || path.contains("/wallet") || path.contains("/reports") || path.contains("/users")) {
             return false;
         }
-        if (path.contains("/my-payments/pay") || ("POST".equals(method) && path.contains("/my-payments"))) {
+        if (path.contains("/my-payments/pay") || path.contains("/my-dues/pay")
+                || ("POST".equals(method) && (path.contains("/my-payments") || path.contains("/my-dues")))) {
             return false;
         }
         return path.equals("/api/v1/client/account")
                 || path.startsWith("/api/v1/client/bbps")
                 || path.contains("/managed-bills")
                 || path.contains("/my-payments")
+                || path.contains("/my-dues")
                 || path.contains("/support-tickets")
                 || path.contains("/branch-home")
                 || path.contains("/branches");

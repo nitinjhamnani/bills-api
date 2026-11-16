@@ -2,6 +2,7 @@ package com.b2bfintech.app.controller;
 
 import com.b2bfintech.app.controller.ClientController.AddClientUserRequest;
 import com.b2bfintech.app.controller.ClientController.ClientUserDto;
+import com.b2bfintech.app.service.BranchService;
 import com.b2bfintech.app.service.TenantUserProvisioningService;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
@@ -39,21 +40,26 @@ public class ClientStaffController {
     private final ClientService clientService;
     private final TenantUserService tenantUserService;
     private final TenantUserProvisioningService provisioningService;
+    private final BranchService branchService;
 
     public ClientStaffController(
             ClientService clientService,
             TenantUserService tenantUserService,
-            TenantUserProvisioningService provisioningService) {
+            TenantUserProvisioningService provisioningService,
+            BranchService branchService) {
         this.clientService = clientService;
         this.tenantUserService = tenantUserService;
         this.provisioningService = provisioningService;
+        this.branchService = branchService;
     }
 
     @GetMapping
     public List<ClientUserDto> list(
             @PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        return tenantUserService.listForClient(clientId).stream().map(ClientUserDto::from).toList();
+        return tenantUserService.listForClient(clientId).stream()
+                .map(user -> ClientUserDto.from(user, branchService.screenRole(user)))
+                .toList();
     }
 
     @PostMapping

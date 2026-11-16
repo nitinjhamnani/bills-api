@@ -353,9 +353,11 @@ public class BranchController {
 
     public record BranchUserDto(String id, String fullName, String phoneNumber, String role, boolean passwordSet) {
         static BranchUserDto from(AppUser user, boolean passwordSet) {
+            String role = user.getRole() == null ? null : user.getRole().getName();
+            // A company operator who belongs to a branch signs in as a branch user, not as the company admin.
+            if ("CLIENT_OPERATOR".equals(role)) role = "BRANCH_USER";
             return new BranchUserDto(
-                    user.getId().toString(), user.getFullName(), user.getPhoneNumber(),
-                    user.getRole() == null ? null : user.getRole().getName(), passwordSet);
+                    user.getId().toString(), user.getFullName(), user.getPhoneNumber(), role, passwordSet);
         }
     }
 

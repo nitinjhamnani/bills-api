@@ -275,6 +275,17 @@ public class VendorSettlementService {
                 .toList();
     }
 
+    /** Display name for a commission report. Falls back to the id when the vendor record is gone. */
+    @Transactional(readOnly = true)
+    public String vendorName(String vendorClientId) {
+        if (vendorClientId == null || vendorClientId.isBlank()) {
+            return "All vendors";
+        }
+        return vendorDetailsRepository.findById(vendorClientId)
+                .map(vendor -> vendor.getName())
+                .orElse(vendorClientId);
+    }
+
     /** Marks commission received for the chosen bills. One wallet debit is recorded per vendor. */
     @Transactional
     public CommissionResult receiveSelected(List<UUID> billPaymentIds, String reference, String mode, AuthenticatedUser actor) {

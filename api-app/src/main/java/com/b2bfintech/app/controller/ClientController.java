@@ -2,6 +2,7 @@ package com.b2bfintech.app.controller;
 
 import com.b2bfintech.common.security.AuthenticatedUser;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import com.b2bfintech.app.service.BranchService;
 import com.b2bfintech.app.service.TenantUserProvisioningService;
 import com.b2bfintech.common.audit.AuditService;
 import com.b2bfintech.common.exception.BadRequestException;
@@ -52,6 +53,7 @@ public class ClientController {
     private final OnboardingService onboardingService;
     private final AppUserRepository appUserRepository;
     private final BranchRepository branchRepository;
+    private final BranchService branchService;
 
     public ClientController(
             ClientService clientService,
@@ -61,7 +63,8 @@ public class ClientController {
             AuditService auditService,
             OnboardingService onboardingService,
             AppUserRepository appUserRepository,
-            BranchRepository branchRepository) {
+            BranchRepository branchRepository,
+            BranchService branchService) {
         this.clientService = clientService;
         this.provisioningService = provisioningService;
         this.tenantUserService = tenantUserService;
@@ -70,6 +73,7 @@ public class ClientController {
         this.onboardingService = onboardingService;
         this.appUserRepository = appUserRepository;
         this.branchRepository = branchRepository;
+        this.branchService = branchService;
     }
 
     @PostMapping
@@ -150,7 +154,9 @@ public class ClientController {
     @GetMapping("/{id}/users")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
     public List<ClientUserDto> listUsers(@PathVariable String id) {
-        return tenantUserService.listForClient(id).stream().map(ClientUserDto::from).toList();
+        return tenantUserService.listForClient(id).stream()
+                .map(user -> ClientUserDto.from(user, branchService.screenRole(user)))
+                .toList();
     }
 
     @PatchMapping("/{id}/users/{userId}/suspend")
@@ -194,8 +200,12 @@ public class ClientController {
 
     public record ClientUserDto(String id, String phoneNumber, String userCode, String fullName, String role, String status) {
         static ClientUserDto from(AppUser u) {
+            return from(u, u.getRole() == null ? null : u.getRole().getName());
+        }
+
+        static ClientUserDto from(AppUser u, String role) {
             return new ClientUserDto(
-                    u.getId().toString(), u.getPhoneNumber(), u.getUserCode(), u.getFullName(), u.getRole().getName(),
+                    u.getId().toString(), u.getPhoneNumber(), u.getUserCode(), u.getFullName(), role,
                     u.getStatus().name());
         }
     }

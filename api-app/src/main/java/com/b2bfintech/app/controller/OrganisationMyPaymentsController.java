@@ -8,9 +8,12 @@ import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
+import com.b2bfintech.billing.entity.VendorPayment;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
+import com.b2bfintech.billing.repository.VendorPaymentRepository;
 import com.b2bfintech.common.exception.ApiException;
+import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.common.security.AuthenticatedUser;
 import com.b2bfintech.app.service.CategoryLabels;
@@ -39,6 +42,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -46,10 +51,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * The organisation's My Payments screen: bill payments the client has already paid for
- * (org_status PENDING/IN_PROCESS), with pick-up/mark-paid/mark-failed actions, plus a bulk Excel
- * download/upload for marking many paid at once (implementation plan's Apache POI pattern, reused
- * from the old bulk bill upload template).
+ * The organisation's My Payments screen: every bill payment a client has made, including bills
+ * assigned to a vendor, with pick-up, commission assignment, settlement, and a bulk Excel download/upload.
  */
 @RestController
 @RequestMapping("/api/v1/paytrix/my-payments")
@@ -64,13 +67,14 @@ public class OrganisationMyPaymentsController {
     private final ClientService clientService;
     private final CommissionAssignmentService commissionAssignmentService;
     private final BranchRepository branchRepository;
+    private final VendorPaymentRepository vendorPaymentRepository;
 
     public OrganisationMyPaymentsController(
             OrganisationPaymentService organisationPaymentService, BillPaymentRepository billPaymentRepository,
             BillRepository billRepository, CategoryLabels categoryLabels,
             MakerCheckerPolicy makerCheckerPolicy,
             ClientService clientService, CommissionAssignmentService commissionAssignmentService,
-            BranchRepository branchRepository) {
+            BranchRepository branchRepository, VendorPaymentRepository vendorPaymentRepository) {
         this.organisationPaymentService = organisationPaymentService;
         this.billPaymentRepository = billPaymentRepository;
         this.billRepository = billRepository;
@@ -79,20 +83,34 @@ public class OrganisationMyPaymentsController {
         this.clientService = clientService;
         this.commissionAssignmentService = commissionAssignmentService;
         this.branchRepository = branchRepository;
+        this.vendorPaymentRepository = vendorPaymentRepository;
     }
 
     @GetMapping
     public List<BillDtos.BillPaymentDto> list(@AuthenticationPrincipal AuthenticatedUser principal) {
         Function<String, String> names = categoryLabels.lookup();
-        return billPaymentRepository
-                .findByOrgStatusInOrderByCreatedAtDesc(List.of(BillPayment.OrgStatus.PENDING, BillPayment.OrgStatus.IN_PROCESS))
-                .stream()
+        return billPaymentRepository.findAllNewestFirst().stream()
                 .map(p -> toDto(p, names, principal)).toList();
     }
 
     @GetMapping("/{id}")
     public BillDtos.BillPaymentDto get(@PathVariable java.util.UUID id, @AuthenticationPrincipal AuthenticatedUser principal) {
         return toDto(getOrThrow(id), categoryLabels.lookup(), principal);
+    }
+
+    /** Shows which selected bills a live commission would give to which vendor. Nothing is assigned. */
+    @PostMapping("/assign-preview")
+    @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
+    public List<CommissionAssignmentService.AssignmentPlan> previewAssignment(@RequestBody AssignBillsRequest request) {
+        return commissionAssignmentService.preview(billPaymentIds(request));
+    }
+
+    /** Assigns the selected bills that a live commission covers. Bills outside every rule stay with Paytrix. */
+    @PostMapping("/assign")
+    @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
+    public List<CommissionAssignmentService.AssignmentPlan> assign(
+            @RequestBody AssignBillsRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
+        return commissionAssignmentService.assign(billPaymentIds(request), principal.userId());
     }
 
     @PostMapping("/{id}/pick-up")
@@ -253,20 +271,46 @@ public class OrganisationMyPaymentsController {
         return message == null || message.isBlank() ? "" : "Detail: " + message;
     }
 
+    private static List<java.util.UUID> billPaymentIds(AssignBillsRequest request) {
+        if (request == null || request.billPaymentIds() == null || request.billPaymentIds().isEmpty()) {
+            throw new BadRequestException("Choose at least one bill");
+        }
+        return request.billPaymentIds();
+    }
+
     private BillPayment getOrThrow(java.util.UUID id) {
         return billPaymentRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
     }
 
     private BillDtos.BillPaymentDto toDto(BillPayment payment, Function<String, String> names, AuthenticatedUser principal) {
         Bill bill = billRepository.findById(payment.getBillId()).orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
+        BigDecimal percent = null;
+        BigDecimal commissionAmount = null;
+        if (payment.isWithVendor()) {
+            VendorPayment owed = vendorPaymentRepository.findByBillPaymentId(payment.getId()).orElse(null);
+            if (owed != null && owed.getCommissionPercent() != null) {
+                percent = owed.getCommissionPercent();
+                commissionAmount = owed.commissionAmount();
+            } else {
+                percent = commissionAssignmentService.currentPercent(payment, bill).orElse(null);
+                if (percent != null && payment.getBillAmount() != null) {
+                    commissionAmount = payment.getBillAmount()
+                            .multiply(percent)
+                            .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+                }
+            }
+        }
         return BillDtos.BillPaymentDto.from(
                 payment, bill, names,
                 makerCheckerPolicy.awaitingChecker(payment),
                 makerCheckerPolicy.canSettleBill(principal, payment),
                 id -> clientService.find(id).map(client -> client.getClientName()).orElse(null),
-                null, null,
+                percent, commissionAmount,
                 branchRepository.findAll().stream()
                         .collect(Collectors.toMap(Branch::getId, Branch::getName, (left, right) -> left))::get);
+    }
+
+    public record AssignBillsRequest(List<java.util.UUID> billPaymentIds) {
     }
 
     public record MarkPaidRequest(String bbpsTransactionId, String externalTransactionId, String billType) {

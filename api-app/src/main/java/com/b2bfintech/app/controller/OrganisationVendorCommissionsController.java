@@ -7,6 +7,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +42,29 @@ public class OrganisationVendorCommissionsController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd) {
         return settlementService.commissionBills(vendorClientId, periodStart, periodEnd);
+    }
+
+    /** Spreadsheet of the same bills the page lists: one sheet of vendor totals, one of each bill. */
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> export(
+            @RequestParam(required = false) String vendorClientId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd) throws IOException {
+        List<VendorSettlementService.CommissionBill> bills =
+                settlementService.commissionBills(vendorClientId, periodStart, periodEnd);
+        String vendorLabel = vendorClientId == null || vendorClientId.isBlank()
+                ? "All vendors"
+                : bills.stream()
+                        .map(VendorSettlementService.CommissionBill::vendorName)
+                        .filter(name -> name != null && !name.isBlank())
+                        .findFirst()
+                        .orElseGet(() -> settlementService.vendorName(vendorClientId));
+        byte[] xlsx = VendorCommissionReport.workbook(bills, periodStart, periodEnd, vendorLabel);
+        String filename = "vendor-commission-" + periodStart + "-to-" + periodEnd + ".xlsx";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(xlsx);
     }
 
     @PostMapping
