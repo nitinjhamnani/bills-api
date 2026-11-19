@@ -11,6 +11,10 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,8 +24,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /** Verified vendor bills that Paytrix still has to pay. */
 @RestController
@@ -41,12 +50,42 @@ public class OrganisationVendorPaymentsController {
     }
 
     @GetMapping
-    public List<BillDtos.BillPaymentDto> list(@RequestParam(required = false) String vendorClientId) {
-        return settlementService.awaitingReimbursement().stream()
-                .filter(payment -> vendorClientId == null || vendorClientId.isBlank()
-                        || vendorClientId.equals(payment.getAssignedVendorClientId()))
-                .map(this::toDto)
-                .toList();
+    public List<BillDtos.BillPaymentDto> list(
+            @RequestParam(required = false) String vendorClientId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd) {
+        return payable(vendorClientId, periodStart, periodEnd).stream().map(this::toDto).toList();
+    }
+
+    /** Spreadsheet of the bills Paytrix still has to pay the vendor for in the selected period. */
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> export(
+            @RequestParam(required = false) String vendorClientId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd) throws IOException {
+        List<BillPayment> payments = payable(vendorClientId, periodStart, periodEnd);
+        String vendorLabel = vendorClientId == null || vendorClientId.isBlank()
+                ? "All vendors"
+                : payments.stream()
+                        .map(BillPayment::getBillAssignedToName)
+                        .filter(name -> name != null && !name.isBlank())
+                        .findFirst()
+                        .orElseGet(() -> settlementService.vendorName(vendorClientId));
+        Map<String, Bill> bills = payments.isEmpty()
+                ? Map.of()
+                : billRepository.findAllById(payments.stream().map(BillPayment::getBillId).collect(Collectors.toSet()))
+                        .stream()
+                        .collect(Collectors.toMap(Bill::getId, Function.identity()));
+        byte[] xlsx = VendorPaymentReport.workbook(payments, bills, periodStart, periodEnd, vendorLabel);
+        String filename = "vendor-payment-" + periodStart + "-to-" + periodEnd + ".xlsx";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(xlsx);
+    }
+
+    private List<BillPayment> payable(String vendorClientId, LocalDate periodStart, LocalDate periodEnd) {
+        return settlementService.awaitingReimbursement(vendorClientId, periodStart, periodEnd);
     }
 
     @PostMapping

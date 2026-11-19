@@ -89,6 +89,19 @@ public class VendorSettlementService {
                 .toList();
     }
 
+    /** Unpaid verified bills whose verification date falls in the period. Vendor is optional. */
+    public List<BillPayment> awaitingReimbursement(String vendorClientId, LocalDate periodStart, LocalDate periodEnd) {
+        Instant[] window = period(periodStart, periodEnd);
+        return awaitingReimbursement().stream()
+                .filter(payment -> vendorClientId == null || vendorClientId.isBlank()
+                        || vendorClientId.equals(payment.getAssignedVendorClientId()))
+                .filter(payment -> {
+                    Instant verifiedOn = payment.getVerifiedOn();
+                    return verifiedOn != null && !verifiedOn.isBefore(window[0]) && verifiedOn.isBefore(window[1]);
+                })
+                .toList();
+    }
+
     /** The checker's decision. It does not depend on a BBPS check having been run. */
     @Transactional
     public VerifyOutcome verifyOne(UUID paymentId, AuthenticatedUser actor) {
@@ -243,14 +256,9 @@ public class VendorSettlementService {
     /** Paid vendor bills in the period whose commission is still open. Vendor is optional. */
     @Transactional(readOnly = true)
     public List<CommissionBill> commissionBills(String vendorClientId, LocalDate periodStart, LocalDate periodEnd) {
-        if (periodStart == null || periodEnd == null) {
-            throw new BadRequestException("Choose a period");
-        }
-        if (periodEnd.isBefore(periodStart)) {
-            throw new BadRequestException("The period end is before the start");
-        }
-        Instant from = periodStart.atStartOfDay(PERIOD_ZONE).toInstant();
-        Instant to = periodEnd.plusDays(1).atStartOfDay(PERIOD_ZONE).toInstant();
+        Instant[] window = period(periodStart, periodEnd);
+        Instant from = window[0];
+        Instant to = window[1];
         return load(vendorPaymentRepository.findByPaymentStatus(VendorPayment.PaymentStatus.PAID)).stream()
                 .filter(row -> vendorClientId == null || vendorClientId.isBlank()
                         || vendorClientId.equals(row.payment().getBillAssignedToId()))
@@ -273,6 +281,19 @@ public class VendorSettlementService {
                         row.vendorPayment().commissionAmount(),
                         row.vendorPayment().getPaymentMadeOn()))
                 .toList();
+    }
+
+    private Instant[] period(LocalDate periodStart, LocalDate periodEnd) {
+        if (periodStart == null || periodEnd == null) {
+            throw new BadRequestException("Choose a period");
+        }
+        if (periodEnd.isBefore(periodStart)) {
+            throw new BadRequestException("The period end is before the start");
+        }
+        return new Instant[] {
+                periodStart.atStartOfDay(PERIOD_ZONE).toInstant(),
+                periodEnd.plusDays(1).atStartOfDay(PERIOD_ZONE).toInstant()
+        };
     }
 
     /** Display name for a commission report. Falls back to the id when the vendor record is gone. */
