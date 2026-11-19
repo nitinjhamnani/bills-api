@@ -45,6 +45,9 @@ public class Branch {
     @Column(name = "branch_source_id", nullable = false, length = 64)
     private String sourceId;
 
+    @Column(name = "is_active", nullable = false)
+    private boolean active = true;
+
     public String getId() {
         return branchId;
     }

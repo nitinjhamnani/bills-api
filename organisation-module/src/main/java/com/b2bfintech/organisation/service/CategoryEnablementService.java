@@ -44,7 +44,9 @@ public class CategoryEnablementService {
     }
 
     public boolean isOrganisationEnabled(String categoryId) {
-        return organisationRepository.findByCategoryId(categoryId).map(OrganisationCategoryConfig::isEnabled).orElse(false);
+        return organisationRepository.findByCategoryId(categoryId)
+                .map(OrganisationCategoryConfig::isEnabled)
+                .orElse(true);
     }
 
     public List<ClientCategoryConfig> listClientRows(String clientId) {
@@ -69,10 +71,5 @@ public class CategoryEnablementService {
         if (!isOrganisationEnabled(categoryId)) {
             throw new BadRequestException("Category '" + categoryId + "' is not enabled for this organisation");
         }
-        clientRepository.findByClientIdAndCategoryId(clientId, categoryId).ifPresent(clientConfig -> {
-            if (!clientConfig.isEnabled()) {
-                throw new BadRequestException("Category '" + categoryId + "' is disabled for this client");
-            }
-        });
     }
 }

@@ -159,7 +159,11 @@ public class ManagedBillService {
 
     @Transactional
     public Bill configureAutomation(String clientId, String billId, boolean autoFetchEnabled, boolean autoPayEnabled) {
-        return getOwnedBill(clientId, billId);
+        clientAccountGuard.requireActiveCorporate(clientId);
+        Bill bill = getOwnedBill(clientId, billId);
+        bill.setAutoFetchEnabled(autoFetchEnabled);
+        bill.setAutoPayEnabled(autoPayEnabled);
+        return billRepository.save(bill);
     }
 
     public Bill getOwnedBill(String clientId, String billId) {

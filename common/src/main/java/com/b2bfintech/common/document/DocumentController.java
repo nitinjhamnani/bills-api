@@ -1,9 +1,11 @@
 package com.b2bfintech.common.document;
 
 import com.b2bfintech.common.security.AuthenticatedUser;
+import com.b2bfintech.common.security.ClientScopeGuard;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -20,6 +22,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/documents")
+@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
 public class DocumentController {
 
     private final DocumentService documentService;
@@ -29,18 +32,29 @@ public class DocumentController {
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
     public DocumentDto upload(
             @RequestParam String ownerType,
             @RequestParam(required = false) String ownerId,
             @RequestParam MultipartFile file,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        Document document = documentService.upload(ownerType, ownerId, file, principal);
+        String effectiveOwnerId = (ownerId == null || ownerId.isBlank()) ? principal.clientId() : ownerId;
+        ClientScopeGuard.assertCanAccess(principal, effectiveOwnerId);
+        Document document = documentService.upload(ownerType, effectiveOwnerId, file, principal);
         return DocumentDto.from(document);
     }
 
     @GetMapping
-    public List<DocumentDto> listByOwner(@RequestParam String ownerType, @RequestParam(required = false) String ownerId) {
-        return documentService.listByOwner(ownerType, ownerId).stream().map(DocumentDto::from).toList();
+    public List<DocumentDto> listByOwner(
+            @RequestParam String ownerType,
+            @RequestParam(required = false) String ownerId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        String effectiveOwnerId = principal.isClientUser() && (ownerId == null || ownerId.isBlank())
+                ? principal.clientId() : ownerId;
+        if (principal.isClientUser()) {
+            ClientScopeGuard.assertCanAccess(principal, effectiveOwnerId);
+        }
+        return documentService.listByOwner(ownerType, effectiveOwnerId).stream().map(DocumentDto::from).toList();
     }
 
     @GetMapping("/pending-review")
@@ -58,8 +72,18 @@ public class DocumentController {
     }
 
     @GetMapping("/{id}/file")
-    public ResponseEntity<InputStreamResource> download(@PathVariable UUID id) {
+    public ResponseEntity<InputStreamResource> download(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
         Document document = documentService.get(id);
+        if (principal.isClientUser()) {
+            boolean ownsByClient = document.getOwnerId() != null && document.getOwnerId().equals(principal.clientId());
+            boolean ownsByPath = document.getStoragePath() != null && principal.clientId() != null
+                    && document.getStoragePath().contains("/" + principal.clientId() + "/");
+            if (!ownsByClient && !ownsByPath) {
+                throw new AccessDeniedException("You do not have access to this document");
+            }
+        }
         InputStreamResource resource = new InputStreamResource(documentService.loadFile(document));
         MediaType mediaType = document.getContentType() != null
                 ? MediaType.parseMediaType(document.getContentType())

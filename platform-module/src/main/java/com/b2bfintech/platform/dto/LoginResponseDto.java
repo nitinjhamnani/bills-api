@@ -14,7 +14,8 @@ public record LoginResponseDto(
             String role,
             String tenantSchema,
             String clientId,
-            String branchId
+            String branchId,
+            String clientType
     ) {
     }
 }

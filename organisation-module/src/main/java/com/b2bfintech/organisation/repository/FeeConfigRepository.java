@@ -10,5 +10,7 @@ import java.util.UUID;
 public interface FeeConfigRepository extends JpaRepository<FeeConfig, UUID> {
     Optional<FeeConfig> findByBillServiceCodeAndEnabledTrue(String billServiceCode);
     Optional<FeeConfig> findByBillServiceCodeIsNullAndEnabledTrue();
+    Optional<FeeConfig> findFirstByBillServiceCodeOrderByUpdatedAtDesc(String billServiceCode);
+    Optional<FeeConfig> findFirstByBillServiceCodeIsNullOrderByUpdatedAtDesc();
     List<FeeConfig> findAll();
 }

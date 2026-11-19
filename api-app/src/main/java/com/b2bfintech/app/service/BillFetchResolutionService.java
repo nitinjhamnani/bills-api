@@ -17,8 +17,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -39,17 +45,24 @@ public class BillFetchResolutionService {
     private final BillActivityLogService activityLogService;
     private final CategoryOperatorRepository operatorRepository;
     private final ObjectMapper objectMapper;
+    private final ObjectProvider<ClientPaymentService> clientPaymentServiceProvider;
+    private final TransactionTemplate newTransaction;
 
     public BillFetchResolutionService(
             BillRepository billRepository, BillFetchRepository billFetchRepository,
             BillingProvider billingProvider, BillActivityLogService activityLogService,
-            CategoryOperatorRepository operatorRepository, ObjectMapper objectMapper) {
+            CategoryOperatorRepository operatorRepository, ObjectMapper objectMapper,
+            ObjectProvider<ClientPaymentService> clientPaymentServiceProvider,
+            PlatformTransactionManager transactionManager) {
         this.billRepository = billRepository;
         this.billFetchRepository = billFetchRepository;
         this.billingProvider = billingProvider;
         this.activityLogService = activityLogService;
         this.operatorRepository = operatorRepository;
         this.objectMapper = objectMapper;
+        this.clientPaymentServiceProvider = clientPaymentServiceProvider;
+        this.newTransaction = new TransactionTemplate(transactionManager);
+        this.newTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /** Reads the current due bill and does not save it. Settlement uses this so a check cannot open a new cycle. */
@@ -155,16 +168,51 @@ public class BillFetchResolutionService {
             billRepository.save(bill);
             activityLogService.log(bill.getId(), null, BillPaymentLog.EventType.FETCH_SUCCESS,
                     due ? "Fetched - due Rs." + fetched.amount() : "Fetched - already paid", null);
+            if (due && bill.isAutoPayEnabled() && bill.getSourceType() == Bill.SourceType.CORP) {
+                ClientPaymentService paymentService = clientPaymentServiceProvider.getIfAvailable();
+                if (paymentService != null) {
+                    BillFetch savedFetch = fetch;
+                    String clientId = bill.getClientId();
+                    java.util.UUID fetchId = savedFetch.getBillFetchId();
+                    String actorId = bill.getUserId();
+                    String billId = bill.getId();
+                    Runnable autoPay = () -> {
+                        try {
+                            newTransaction.executeWithoutResult(
+                                    status -> paymentService.payDue(clientId, fetchId, actorId));
+                            savedFetch.setBillPaymentStatus(BillFetch.PaymentStatus.PAID);
+                        } catch (RuntimeException autoPayEx) {
+                            log.info("Auto-pay skipped for bill {}: {}", billId, autoPayEx.getMessage());
+                        }
+                    };
+                    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                autoPay.run();
+                            }
+                        });
+                    } else {
+                        autoPay.run();
+                    }
+                }
+            }
         } catch (BillFetchFailedException | JsonProcessingException ex) {
+            boolean permanent = ex instanceof BillFetchFailedException failed && failed.isPermanent();
             String remarks = ex instanceof BillFetchFailedException failed ? failed.getMessage() : "The provider response could not be read";
-            fetch.setBillStatus(BillFetch.BillStatus.FAILED);
+            fetch.setBillStatus(permanent ? BillFetch.BillStatus.FAILED : BillFetch.BillStatus.PENDING);
             fetch.setBillPaymentStatus(BillFetch.PaymentStatus.PENDING);
             fetch.setFetchStatus(BillFetch.FetchStatus.FAILED);
             fetch.setFetchRemarks(abbreviate(remarks));
             fetch = billFetchRepository.save(fetch);
             bill.setLatestFetch(fetch);
             billRepository.save(bill);
-            activityLogService.log(bill.getId(), null, BillPaymentLog.EventType.FETCH_FAILED_PERMANENT, abbreviate(remarks), null);
+            activityLogService.log(
+                    bill.getId(),
+                    null,
+                    permanent ? BillPaymentLog.EventType.FETCH_FAILED_PERMANENT : BillPaymentLog.EventType.FETCH_FAILED_TRANSIENT,
+                    abbreviate(remarks),
+                    null);
         }
         return bill;
     }

@@ -59,8 +59,8 @@ public class BbpsLookupService {
                 return cached;
             }
             BbpsCategory category = requireCategory(categoryId);
-            List<CategoryOperator> stored = operatorRepository.findActiveByCategory(category.id());
-            if (!stored.isEmpty()) {
+            if (operatorRepository.existsByCategoryId(category.id())) {
+                List<CategoryOperator> stored = operatorRepository.findActiveByCategory(category.id());
                 rememberParameters(stored);
                 List<BbpsProvider.ProviderBiller> operators = stored.stream()
                         .map(operator -> toBiller(operator, categoryId)).toList();
@@ -74,7 +74,7 @@ public class BbpsLookupService {
             try {
                 operatorRepository.insertAll(category.id(), category.providerCode(), fetched);
             } catch (DataIntegrityViolationException ex) {
-                stored = operatorRepository.findActiveByCategory(category.id());
+                List<CategoryOperator> stored = operatorRepository.findActiveByCategory(category.id());
                 rememberParameters(stored);
                 List<BbpsProvider.ProviderBiller> operators = stored.stream()
                         .map(operator -> toBiller(operator, categoryId)).toList();

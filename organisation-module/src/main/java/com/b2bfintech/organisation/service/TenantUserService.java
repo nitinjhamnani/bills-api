@@ -56,9 +56,9 @@ public class TenantUserService {
         user.setUserId(generateUniqueUserId());
         user.setPhone(phoneNumber);
         user.setName(fullName);
-        user.setUserType(AppUser.UserType.ORG_SUPERADMIN);
+        user.setUserType(AppUser.UserType.SUPER_ADMIN);
         user.setUserOrgId(AppUser.PAYTRIX);
-        user.setCreatedByType("ADMIN");
+        user.setCreatedByType("SUPER_ADMIN");
         user.setPassword(passwordHash);
         user.setActive(true);
         return appUserRepository.save(user);
@@ -76,6 +76,9 @@ public class TenantUserService {
 
     public AppUser updateProfile(String userId, String fullName, String email, String roleName) {
         AppUser user = getById(userId);
+        if (user.isSuperAdmin()) {
+            throw new BadRequestException("The platform superadmin cannot be modified");
+        }
         user.setName(fullName);
         user.setEmail(email);
         user.setUserType(UserTypes.fromLegacyRole(roleName, clientType(user)));
@@ -92,6 +95,9 @@ public class TenantUserService {
 
     public void suspend(String userId) {
         AppUser user = getById(userId);
+        if (user.isSuperAdmin()) {
+            throw new BadRequestException("The platform superadmin cannot be suspended");
+        }
         user.setActive(false);
         appUserRepository.save(user);
     }

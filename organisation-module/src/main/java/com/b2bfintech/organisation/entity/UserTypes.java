@@ -28,7 +28,8 @@ public final class UserTypes {
             return null;
         }
         return switch (type) {
-            case ORG_SUPERADMIN, ORG_ADMIN -> "ORGANISATION_ADMIN";
+            case SUPER_ADMIN, ORG_SUPERADMIN -> "SUPER_ADMIN";
+            case ORG_ADMIN -> "ORGANISATION_ADMIN";
             case ORG_USER -> "VIEWER";
             case ORG_MAKER -> "MAKER";
             case ORG_CHECKER -> "CHECKER";

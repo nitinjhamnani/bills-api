@@ -13,14 +13,18 @@ public class Client {
     private String address;
     private String state;
     private String location;
+    private String registrationNumber;
+    private String signingAuthority;
     private ClientType clientType;
     private CorporateKind corporateKind;
     private boolean active;
+    private ClientStatus accountStatus;
     private String onboardingStatus;
     private String agreementStatus;
     private boolean agreementSigned;
     private String onboardedBy;
     private String onboardedById;
+    private java.time.Instant createdAt;
 
     public String getId() {
         return id;
@@ -153,28 +157,66 @@ public class Client {
         this.onboardedById = onboardedById;
     }
 
-    /** Active companies stay active. One that has not finished eKYC and the contract is still pending. */
+    public String getRegistrationNumber() {
+        return registrationNumber;
+    }
+
+    public void setRegistrationNumber(String registrationNumber) {
+        this.registrationNumber = registrationNumber;
+    }
+
+    public String getSigningAuthority() {
+        return signingAuthority;
+    }
+
+    public void setSigningAuthority(String signingAuthority) {
+        this.signingAuthority = signingAuthority;
+    }
+
+    public ClientStatus getAccountStatus() {
+        return accountStatus;
+    }
+
+    public void setAccountStatus(ClientStatus accountStatus) {
+        this.accountStatus = accountStatus;
+    }
+
+    /** Active companies stay active. Terminated stays terminated. One that has not finished eKYC and the contract is still pending. */
     public ClientStatus getStatus() {
-        if (active) {
+        if (accountStatus == ClientStatus.TERMINATED) {
+            return ClientStatus.TERMINATED;
+        }
+        if (active || accountStatus == ClientStatus.ACTIVE) {
             return ClientStatus.ACTIVE;
+        }
+        if (accountStatus == ClientStatus.SUSPENDED) {
+            return ClientStatus.SUSPENDED;
+        }
+        if (accountStatus == ClientStatus.PENDING) {
+            return ClientStatus.PENDING;
         }
         if (clientType == ClientType.CORPORATE
                 && (!"COMPLETE".equals(onboardingStatus) || !"SIGNED".equals(agreementStatus))) {
             return ClientStatus.PENDING;
         }
-        if (clientType == ClientType.VENDOR && !"SIGNED".equals(agreementStatus)) {
+        if (clientType == ClientType.VENDOR
+                && (!"COMPLETE".equals(onboardingStatus) || !"SIGNED".equals(agreementStatus))) {
             return ClientStatus.PENDING;
         }
         return ClientStatus.SUSPENDED;
     }
 
     public void setStatus(ClientStatus status) {
+        this.accountStatus = status;
         this.active = status == ClientStatus.ACTIVE;
     }
 
-    /** The sales person, when a corporate was brought in by sales. */
     public java.time.Instant getCreatedAt() {
-        return null;
+        return createdAt;
+    }
+
+    public void setCreatedAt(java.time.Instant createdAt) {
+        this.createdAt = createdAt;
     }
 
     public String getSalesUserId() {

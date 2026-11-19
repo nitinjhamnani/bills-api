@@ -46,7 +46,8 @@ public class PlatformAdminPasswordInitializer implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        if (appUserRepository.existsByUserType(AppUser.UserType.ORG_SUPERADMIN)) {
+        if (appUserRepository.existsByUserType(AppUser.UserType.SUPER_ADMIN)
+                || appUserRepository.existsByUserType(AppUser.UserType.ORG_SUPERADMIN)) {
             return;
         }
         if (phone == null || phone.isBlank() || password == null || password.isBlank()) {

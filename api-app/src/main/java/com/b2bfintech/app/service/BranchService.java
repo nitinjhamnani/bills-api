@@ -33,7 +33,7 @@ public class BranchService {
     /** Temporary shared password so a branch user can sign in without the one-time code. */
     public static final String DEFAULT_PASSWORD = "Password@123";
 
-    private static final Set<String> ASSIGNABLE_ROLES = Set.of("CLIENT_ADMIN", "CLIENT_OPERATOR", "BRANCH_USER");
+    private static final Set<String> ASSIGNABLE_ROLES = Set.of("CLIENT_OPERATOR", "BRANCH_USER");
 
     private final BranchRepository branchRepository;
     private final BranchMembershipRepository membershipRepository;
@@ -88,7 +88,7 @@ public class BranchService {
         return branch;
     }
 
-    /** One row per branch: bill count, user count, and whether anyone there can still sign in. */
+    /** One row per branch: bill count, user count, assigned users, and branch status. */
     public List<BranchOverview> overview(String clientId) {
         Map<String, Long> billCounts = new HashMap<>();
         for (BillRepository.BranchBillCount row : billRepository.countGroupedByBranch(clientId)) {
@@ -96,17 +96,33 @@ public class BranchService {
         }
         return list(clientId).stream().map(branch -> {
             List<AppUser> people = users(branch.getId());
-            boolean suspended = !people.isEmpty()
-                    && people.stream().allMatch(user -> user.getStatus() == AppUser.UserStatus.SUSPENDED);
             return new BranchOverview(
                     branch,
                     people.size(),
                     billCounts.getOrDefault(branch.getId(), 0L),
-                    suspended ? "SUSPENDED" : "ACTIVE");
+                    branch.isActive() ? "ACTIVE" : "SUSPENDED",
+                    people);
         }).toList();
     }
 
-    public record BranchOverview(Branch branch, int userCount, long managedBillCount, String status) {
+    public BranchOverview overviewOne(String clientId, String branchId) {
+        Branch branch = get(clientId, branchId);
+        List<AppUser> people = users(branch.getId());
+        long billCount = billRepository.countGroupedByBranch(clientId).stream()
+                .filter(row -> branch.getId().equals(row.getBranchId()))
+                .mapToLong(BillRepository.BranchBillCount::getBillCount)
+                .findFirst()
+                .orElse(0L);
+        return new BranchOverview(
+                branch,
+                people.size(),
+                billCount,
+                branch.isActive() ? "ACTIVE" : "SUSPENDED",
+                people);
+    }
+
+    public record BranchOverview(
+            Branch branch, int userCount, long managedBillCount, String status, List<AppUser> users) {
     }
 
     public List<AppUser> users(String branchId) {
@@ -145,6 +161,85 @@ public class BranchService {
                 .toList();
     }
 
+    @Transactional
+    public List<Branch> setBranchesForUser(String clientId, String userId, List<String> requestedBranchIds) {
+        requireActiveCorporate(clientId);
+        AppUser user = appUserRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        if (user.organisationId() == null || !clientId.equals(user.organisationId())) {
+            throw new BadRequestException("Choose a user from this corporate");
+        }
+        if (!user.hasUserType(AppUser.UserType.CORP_USER)) {
+            throw new BadRequestException("Only branch users can be assigned to a branch");
+        }
+        Set<String> targetIds = new HashSet<>();
+        if (requestedBranchIds != null) {
+            for (String raw : requestedBranchIds) {
+                if (raw != null && !raw.isBlank()) {
+                    String bid = raw.trim();
+                    get(clientId, bid);
+                    targetIds.add(bid);
+                }
+            }
+        }
+        List<String> currentIds = membershipRepository.findBranchIdsByUserId(userId);
+        for (String currentId : currentIds) {
+            if (!targetIds.contains(currentId)) {
+                membershipRepository.findByUserIdAndBranchId(userId, currentId)
+                        .ifPresent(membershipRepository::delete);
+            }
+        }
+        for (String targetId : targetIds) {
+            if (!currentIds.contains(targetId)) {
+                link(userId, targetId);
+            }
+        }
+        return branchesForUser(clientId, userId);
+    }
+
+    @Transactional
+    public List<AppUser> setUsersForBranch(String clientId, String branchId, List<String> requestedUserIds) {
+        requireActiveCorporate(clientId);
+        get(clientId, branchId);
+        Set<String> targetUserIds = new HashSet<>();
+        if (requestedUserIds != null) {
+            for (String raw : requestedUserIds) {
+                if (raw != null && !raw.isBlank()) {
+                    String uid = raw.trim();
+                    AppUser user = appUserRepository.findById(uid)
+                             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+                    if (user.organisationId() == null || !clientId.equals(user.organisationId())) {
+                        throw new BadRequestException("Choose a branch user from this corporate");
+                    }
+                    if (!user.hasUserType(AppUser.UserType.CORP_USER)) {
+                        throw new BadRequestException("Only branch users can be assigned to a branch");
+                    }
+                    targetUserIds.add(uid);
+                }
+            }
+        }
+        List<String> currentUserIds = membershipRepository.findUserIdsByBranchId(branchId);
+        for (String currentId : currentUserIds) {
+            if (!targetUserIds.contains(currentId)) {
+                membershipRepository.findByUserIdAndBranchId(currentId, branchId)
+                        .ifPresent(membershipRepository::delete);
+            }
+        }
+        for (String targetId : targetUserIds) {
+            if (!currentUserIds.contains(targetId)) {
+                link(targetId, branchId);
+            }
+        }
+        return users(branchId);
+    }
+
+    @Transactional
+    public Branch setBranchActive(String clientId, String branchId, boolean active) {
+        Branch branch = get(clientId, branchId);
+        branch.setActive(active);
+        return branchRepository.save(branch);
+    }
+
     /**
      * The role shown on screen. A company user who belongs to a branch signs in as a branch user.
      * Their stored type is still the shared company-user type, which would otherwise look like an operator.
@@ -153,11 +248,10 @@ public class BranchService {
         if (user == null || user.getRole() == null) {
             return null;
         }
-        String role = user.getRole().getName();
-        if ("CLIENT_OPERATOR".equals(role) && !membershipRepository.findBranchIdsByUserId(user.getUserId()).isEmpty()) {
+        if (user.hasUserType(AppUser.UserType.CORP_USER)) {
             return "BRANCH_USER";
         }
-        return role;
+        return user.getRole().getName();
     }
 
     /** Branch users only see bills on branches they belong to. Everyone else sees the corporate. */

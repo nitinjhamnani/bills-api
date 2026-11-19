@@ -17,19 +17,13 @@ public class ClientOnboarding {
         ClientOnboarding view = new ClientOnboarding();
         view.clientId = client.getId();
         view.legalName = client.getClientName();
+        view.registrationNumber = client.getRegistrationNumber();
         view.registeredAddress = client.getAddress();
-        boolean vendor = client.getClientType() == Client.ClientType.VENDOR;
-        view.detailsSubmitted = vendor
-                ? !"NOT_STARTED".equals(client.getAgreementStatus())
-                : !"NOT_STARTED".equals(client.getOnboardingStatus());
-        if (vendor) {
-            view.kycStatus = "NOT_STARTED".equals(client.getAgreementStatus())
-                    ? KycStatus.NOT_STARTED
-                    : KycStatus.COMPLETE;
-        } else {
-            view.kycStatus = KycStatus.valueOf(
-                    client.getOnboardingStatus() == null ? "NOT_STARTED" : client.getOnboardingStatus());
-        }
+        view.signingAuthority = client.getSigningAuthority();
+        view.detailsSubmitted = !"NOT_STARTED".equals(client.getOnboardingStatus())
+                || !"NOT_STARTED".equals(client.getAgreementStatus());
+        view.kycStatus = KycStatus.valueOf(
+                client.getOnboardingStatus() == null ? "NOT_STARTED" : client.getOnboardingStatus());
         view.contractStatus = ContractStatus.valueOf(
                 client.getAgreementStatus() == null ? "NOT_STARTED" : client.getAgreementStatus());
         return view;

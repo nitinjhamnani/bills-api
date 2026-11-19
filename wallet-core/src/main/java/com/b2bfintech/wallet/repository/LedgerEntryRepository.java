@@ -18,6 +18,19 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, UUID> 
     List<LedgerEntry> findByWalletAccountIdAndCreatedAtBetweenOrderByCreatedAtAsc(
             @Param("walletAccountId") UUID walletAccountId, @Param("from") Instant from, @Param("to") Instant to);
 
+    @Query("""
+            select e from LedgerEntry e join fetch e.walletAccount
+            where e.category = :category
+              and e.entryType = :entryType
+              and e.createdAt between :from and :to
+            order by e.createdAt desc
+            """)
+    List<LedgerEntry> findByCategoryAndEntryTypeAndCreatedAtBetweenOrderByCreatedAtDesc(
+            @Param("category") String category,
+            @Param("entryType") LedgerEntry.EntryType entryType,
+            @Param("from") Instant from,
+            @Param("to") Instant to);
+
     /** Credits minus debits before a moment: the wallet's balance at that point. */
     @Query("select coalesce(sum(case when e.entryType = 'CREDIT' then e.amount else -e.amount end), 0) " +
             "from LedgerEntry e where e.walletAccount.id = :walletAccountId and e.createdAt < :before")

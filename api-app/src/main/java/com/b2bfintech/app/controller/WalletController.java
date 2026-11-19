@@ -1,6 +1,7 @@
 package com.b2bfintech.app.controller;
 
 import com.b2bfintech.app.service.ClientAccountGuard;
+import com.b2bfintech.app.service.MakerCheckerPolicy;
 import com.b2bfintech.app.service.WalletTopupService;
 import com.b2bfintech.common.document.DocumentStorageService;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
@@ -42,16 +43,18 @@ public class WalletController {
     private final LedgerEntryRepository ledgerEntryRepository;
     private final ClientAccountGuard clientAccountGuard;
     private final DocumentStorageService storageService;
+    private final MakerCheckerPolicy makerCheckerPolicy;
 
     public WalletController(
             WalletService walletService, WalletTopupService walletTopupService,
             LedgerEntryRepository ledgerEntryRepository, ClientAccountGuard clientAccountGuard,
-            DocumentStorageService storageService) {
+            DocumentStorageService storageService, MakerCheckerPolicy makerCheckerPolicy) {
         this.walletService = walletService;
         this.walletTopupService = walletTopupService;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.clientAccountGuard = clientAccountGuard;
         this.storageService = storageService;
+        this.makerCheckerPolicy = makerCheckerPolicy;
     }
 
     @GetMapping
@@ -86,14 +89,20 @@ public class WalletController {
                           @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         clientAccountGuard.requireActiveCorporate(clientId);
-        return TopupDto.from(walletTopupService.submit(clientId, amount, paymentMode, paymentReference, proof, principal));
+        return TopupDto.from(walletTopupService.submit(clientId, amount, paymentMode, paymentReference, proof, principal), false);
     }
 
     @GetMapping("/topups")
     public List<TopupDto> topups(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         clientAccountGuard.requireWalletClient(clientId);
-        return walletTopupService.listForClient(clientId).stream().map(TopupDto::from).toList();
+        return walletTopupService.listForClient(clientId).stream()
+                .map(r -> TopupDto.from(
+                        r,
+                        r.getStatus() == WalletTransactionRequest.Status.PENDING
+                                && !principal.isClientUser()
+                                && makerCheckerPolicy.canReviewTopup(principal, r.getAmount())))
+                .toList();
     }
 
     @GetMapping("/topups/{requestId}/proof")
@@ -126,11 +135,15 @@ public class WalletController {
     /** {@code paymentMode} is the mode column and {@code paymentReference} is the UTR. */
     public record TopupDto(String id, BigDecimal amount, String paymentMode, String paymentReference,
                            boolean hasProof, String status, Instant createdAt, String createdBy,
-                           String approvedBy, Instant approvedOn, Instant lastUpdated) {
-        static TopupDto from(WalletTransactionRequest r) {
+                           String approvedBy, Instant approvedOn, Instant lastUpdated, boolean canReview) {
+        public static TopupDto from(WalletTransactionRequest r) {
+            return from(r, false);
+        }
+
+        public static TopupDto from(WalletTransactionRequest r, boolean canReview) {
             return new TopupDto(r.getRequestId().toString(), r.getAmount(), r.getMode().name(), r.getUtr(),
                     r.getProof() != null && !r.getProof().isBlank(), r.getStatus().name(), r.getCreatedDate(),
-                    r.getCreatedBy(), r.getApprovedBy(), r.getApprovedOn(), r.getLastUpdated());
+                    r.getCreatedBy(), r.getApprovedBy(), r.getApprovedOn(), r.getLastUpdated(), canReview);
         }
     }
 }

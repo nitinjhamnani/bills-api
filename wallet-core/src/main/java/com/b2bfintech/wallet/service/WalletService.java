@@ -67,6 +67,11 @@ public class WalletService {
     /** @throws BadRequestException if the wallet's available balance can't cover {@code amount}. */
     @Transactional
     public LedgerEntry debit(String clientId, BigDecimal amount, String category, String createdBy) {
+        return debit(clientId, amount, category, createdBy, null);
+    }
+
+    @Transactional
+    public LedgerEntry debit(String clientId, BigDecimal amount, String category, String createdBy, String description) {
         ensureAccount(clientId, WalletAccount.WalletType.WALLET);
         WalletAccount account = walletAccountRepository.findForUpdate(clientId).orElseThrow();
         requireActive(account);
@@ -76,32 +81,40 @@ public class WalletService {
         }
         account.setBalance(account.getBalance().subtract(amount));
         walletAccountRepository.save(account);
-        return writeEntry(account, LedgerEntry.EntryType.DEBIT, amount, category, createdBy);
+        return writeEntry(account, LedgerEntry.EntryType.DEBIT, amount, category, createdBy, description);
     }
 
     @Transactional
     public LedgerEntry credit(String clientId, BigDecimal amount, String category, String createdBy) {
+        return credit(clientId, amount, category, createdBy, null);
+    }
+
+    @Transactional
+    public LedgerEntry credit(String clientId, BigDecimal amount, String category, String createdBy, String description) {
         ensureAccount(clientId, WalletAccount.WalletType.WALLET);
         WalletAccount account = walletAccountRepository.findForUpdate(clientId).orElseThrow();
         requireActive(account);
         account.setBalance(account.getBalance().add(amount));
         walletAccountRepository.save(account);
-        return writeEntry(account, LedgerEntry.EntryType.CREDIT, amount, category, createdBy);
+        return writeEntry(account, LedgerEntry.EntryType.CREDIT, amount, category, createdBy, description);
     }
 
     private LedgerEntry writeEntry(WalletAccount account, LedgerEntry.EntryType entryType, BigDecimal amount,
-                                   String category, String createdBy) {
+                                   String category, String createdBy, String description) {
+        String cleanNote = (description == null || description.isBlank()) ? null
+                : (description.trim().length() <= 300 ? description.trim() : description.trim().substring(0, 300));
         LedgerEntry entry = new LedgerEntry();
         entry.setWalletAccount(account);
         entry.setEntryType(entryType);
         entry.setAmount(amount);
         entry.setCategory(category);
         entry.setCreatedBy(createdBy);
+        entry.setDescription(cleanNote);
         entry = ledgerEntryRepository.save(entry);
         recordPlatform(account.getId(),
                 entryType == LedgerEntry.EntryType.CREDIT
                         ? PlatformTransaction.Type.DEBIT : PlatformTransaction.Type.CREDIT,
-                amount, category, createdBy);
+                amount, category, createdBy, cleanNote);
         return entry;
     }
 
@@ -129,17 +142,18 @@ public class WalletService {
         recordPlatform(vendorWallet.getId(),
                 vendorSide == PlatformTransaction.Type.CREDIT
                         ? PlatformTransaction.Type.DEBIT : PlatformTransaction.Type.CREDIT,
-                amount, category.name(), createdBy);
+                amount, category.name(), createdBy, null);
         return row;
     }
 
-    private void recordPlatform(UUID walletId, PlatformTransaction.Type type, BigDecimal amount, String category, String createdBy) {
+    private void recordPlatform(UUID walletId, PlatformTransaction.Type type, BigDecimal amount, String category, String createdBy, String description) {
         PlatformTransaction row = new PlatformTransaction();
         row.setWalletId(walletId);
         row.setType(type);
         row.setAmount(amount);
         row.setCategory(category);
         row.setCreatedBy(createdBy);
+        row.setDescription(description);
         platformTransactionRepository.save(row);
     }
 }

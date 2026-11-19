@@ -22,11 +22,12 @@ public class FeeConfigService {
         if (value == null || value.signum() < 0) {
             throw new BadRequestException("value must not be negative");
         }
-        Optional<FeeConfig> existing = billServiceCode == null
-                ? repository.findByBillServiceCodeIsNullAndEnabledTrue()
-                : repository.findByBillServiceCodeAndEnabledTrue(billServiceCode);
+        String normalizedCode = (billServiceCode == null || billServiceCode.isBlank()) ? null : billServiceCode.trim();
+        Optional<FeeConfig> existing = normalizedCode == null
+                ? repository.findFirstByBillServiceCodeIsNullOrderByUpdatedAtDesc()
+                : repository.findFirstByBillServiceCodeOrderByUpdatedAtDesc(normalizedCode);
         FeeConfig config = existing.orElseGet(FeeConfig::new);
-        config.setBillServiceCode(billServiceCode);
+        config.setBillServiceCode(normalizedCode);
         config.setFeeType(feeType);
         config.setValue(value);
         config.setEnabled(enabled);

@@ -12,6 +12,8 @@ import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
 import com.b2bfintech.organisation.service.FeeConfigService;
+import com.b2bfintech.platform.entity.BbpsCategoryEntity;
+import com.b2bfintech.platform.repository.BbpsCategoryRepository;
 import com.b2bfintech.wallet.entity.LedgerEntry;
 import com.b2bfintech.wallet.service.WalletService;
 import org.springframework.stereotype.Service;
@@ -40,12 +42,14 @@ public class ClientPaymentService {
     private final BillActivityLogService activityLogService;
     private final ClientAccountGuard clientAccountGuard;
     private final CommissionAssignmentService commissionAssignmentService;
+    private final BbpsCategoryRepository categoryRepository;
 
     public ClientPaymentService(
             BillPaymentRepository billPaymentRepository, BillFetchRepository billFetchRepository, BillRepository billRepository,
             CategoryEnablementService categoryEnablementService, FeeConfigService feeConfigService,
             WalletService walletService, BillActivityLogService activityLogService,
-            ClientAccountGuard clientAccountGuard, CommissionAssignmentService commissionAssignmentService) {
+            ClientAccountGuard clientAccountGuard, CommissionAssignmentService commissionAssignmentService,
+            BbpsCategoryRepository categoryRepository) {
         this.billPaymentRepository = billPaymentRepository;
         this.billFetchRepository = billFetchRepository;
         this.billRepository = billRepository;
@@ -55,6 +59,7 @@ public class ClientPaymentService {
         this.activityLogService = activityLogService;
         this.clientAccountGuard = clientAccountGuard;
         this.commissionAssignmentService = commissionAssignmentService;
+        this.categoryRepository = categoryRepository;
     }
 
     @Transactional
@@ -75,7 +80,12 @@ public class ClientPaymentService {
                 || fetch.getBillAmount() == null || fetch.getBillAmount().signum() <= 0) {
             throw new BadRequestException("This bill has nothing due");
         }
-        categoryEnablementService.assertEnabled(clientId, bill.getCategoryName());
+        String categoryCode = bill.getCategoryId() == null
+                ? bill.getCategoryName()
+                : categoryRepository.findById(bill.getCategoryId())
+                        .map(BbpsCategoryEntity::getCategoryId)
+                        .orElse(bill.getCategoryName());
+        categoryEnablementService.assertEnabled(clientId, categoryCode);
 
         Instant now = Instant.now();
         BillPayment payment = new BillPayment();
@@ -91,13 +101,6 @@ public class ClientPaymentService {
 
         String category = LedgerEntry.categoryOf(bill.getCategoryName());
         walletService.debit(clientId, payment.getBillAmount(), category, userId);
-        BillPayment paid = payment;
-        feeConfigService.getApplicableFee(bill.getCategoryName()).ifPresent(fee -> {
-            BigDecimal feeAmount = fee.computeFee(paid.getBillAmount());
-            if (feeAmount.signum() > 0) {
-                walletService.debit(clientId, feeAmount, category, userId);
-            }
-        });
 
         fetch.setBillPaymentStatus(BillFetch.PaymentStatus.PAID);
         billFetchRepository.save(fetch);

@@ -21,7 +21,7 @@ import java.util.Set;
 @Service
 public class MakerCheckerPolicy {
 
-    private static final Set<String> MONEY_ROLES = Set.of("ORGANISATION_ADMIN", "MAKER", "CHECKER");
+    private static final Set<String> MONEY_ROLES = Set.of("SUPER_ADMIN", "ORGANISATION_ADMIN", "MAKER", "CHECKER");
 
     private final ApprovalRuleService approvalRuleService;
     private final BillPaymentLogRepository logRepository;
@@ -63,25 +63,34 @@ public class MakerCheckerPolicy {
         if (!requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, payment.getAmount())) {
             return true;
         }
-        if ("ORGANISATION_ADMIN".equals(user.role())) {
+        if ("SUPER_ADMIN".equals(user.role()) || "ORGANISATION_ADMIN".equals(user.role())) {
             return true;
         }
         if (!"CHECKER".equals(user.role())) {
             return false;
         }
         String picker = pickedUpBy(payment);
-        return picker == null || !picker.equals(user.phoneNumber());
+        return !isSameActor(user, picker);
     }
 
     public void assertCanSettleBill(AuthenticatedUser user, BillPayment payment) {
         if (canSettleBill(user, payment)) {
             return;
         }
-        if (user != null && user.phoneNumber() != null && user.phoneNumber().equals(pickedUpBy(payment))
+        if (isSameActor(user, pickedUpBy(payment))
                 && requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, payment.getAmount())) {
             throw new AccessDeniedException("The person who picked up this bill cannot also settle it");
         }
         throw new AccessDeniedException("A checker must settle this bill because it is at or above the approval threshold");
+    }
+
+    private static boolean isSameActor(AuthenticatedUser user, String actor) {
+        if (user == null || actor == null || actor.isBlank()) {
+            return false;
+        }
+        return actor.equals(user.phoneNumber())
+                || actor.equals(user.userId())
+                || actor.equals(user.userCode());
     }
 
     public boolean canReviewTopup(AuthenticatedUser user, BigDecimal amount) {
@@ -91,7 +100,7 @@ public class MakerCheckerPolicy {
         if (!requiresApproval(ApprovalRule.ActionType.OFFLINE_TOPUP_CREDIT, amount)) {
             return true;
         }
-        return "ORGANISATION_ADMIN".equals(user.role()) || "CHECKER".equals(user.role());
+        return "SUPER_ADMIN".equals(user.role()) || "ORGANISATION_ADMIN".equals(user.role()) || "CHECKER".equals(user.role());
     }
 
     public void assertCanReviewTopup(AuthenticatedUser user, BigDecimal amount) {

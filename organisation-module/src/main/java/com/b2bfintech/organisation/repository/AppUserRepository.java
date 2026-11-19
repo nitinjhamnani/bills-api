@@ -26,5 +26,7 @@ public interface AppUserRepository extends JpaRepository<AppUser, String> {
 
     List<AppUser> findByUserOrgId(String userOrgId);
 
+    long countByUserOrgId(String userOrgId);
+
     List<AppUser> findByUserType(AppUser.UserType userType);
 }

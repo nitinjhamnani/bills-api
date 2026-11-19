@@ -89,9 +89,10 @@ public class CommissionController {
     }
 
     @GetMapping("/providers")
-    public List<ProviderDto> providers(@RequestParam String categoryId) {
-        requireEnabled(categoryId);
-        return lookupService.billers(categoryId).stream()
+    public List<ProviderDto> providers(@RequestParam(required = false, defaultValue = "Electricity") String categoryId) {
+        String effectiveCategory = (categoryId == null || categoryId.isBlank()) ? "Electricity" : categoryId.trim();
+        requireEnabled(effectiveCategory);
+        return lookupService.billers(effectiveCategory).stream()
                 .map(biller -> new ProviderDto(biller.billerId(), biller.name()))
                 .toList();
     }
@@ -114,7 +115,10 @@ public class CommissionController {
     @PostMapping
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
     public CommissionDto create(@Valid @RequestBody CreateRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
-        BbpsCategory category = requireEnabled(request.categoryId());
+        String effectiveCategory = (request.categoryId() == null || request.categoryId().isBlank())
+                ? "Electricity"
+                : request.categoryId().trim();
+        BbpsCategory category = requireEnabled(effectiveCategory);
         BbpsProvider.ProviderBiller operator = lookupService.billers(category.categoryId()).stream()
                 .filter(biller -> biller.billerId().equals(request.operatorId()))
                 .findFirst()
@@ -216,7 +220,7 @@ public class CommissionController {
     }
 
     public record CreateRequest(
-            @NotBlank String categoryId,
+            String categoryId,
             @NotBlank String operatorId,
             @NotBlank String vendorId,
             @NotNull @DecimalMin("0") BigDecimal minRange,

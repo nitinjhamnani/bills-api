@@ -60,7 +60,7 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/v1/clients/{clientId}/managed-bills")
-@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
+@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
 public class ManagedBillController {
 
     private final ManagedBillService managedBillService;

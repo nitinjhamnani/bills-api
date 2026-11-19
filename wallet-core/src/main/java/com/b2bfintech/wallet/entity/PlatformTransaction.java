@@ -48,6 +48,9 @@ public class PlatformTransaction {
     @Column(name = "transaction_category", nullable = false, length = 40)
     private String category;
 
+    @Column(name = "description", length = 300)
+    private String description;
+
     @PrePersist
     void onCreate() {
         createdAt = Instant.now();

@@ -5,10 +5,13 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+
+import java.time.Instant;
 
 /** A corporate Paytrix onboards. Corporates create and pay bills. */
 @Entity
@@ -44,6 +47,12 @@ public class CorpDetails {
     @Column(name = "corp_location", length = 150)
     private String location;
 
+    @Column(name = "registration_number", length = 100)
+    private String registrationNumber;
+
+    @Column(name = "signing_authority", length = 200)
+    private String signingAuthority;
+
     @Column(name = "is_agreement_signed", nullable = false)
     private boolean agreementSigned;
 
@@ -64,6 +73,20 @@ public class CorpDetails {
 
     @Column(name = "is_active", nullable = false)
     private boolean active;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "account_status", nullable = false, length = 20)
+    private Client.ClientStatus accountStatus = Client.ClientStatus.PENDING;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @PrePersist
+    void onCreate() {
+        if (createdAt == null) {
+            createdAt = Instant.now();
+        }
+    }
 
     public enum CorpType {
         COMPANY, INDIVIDUAL

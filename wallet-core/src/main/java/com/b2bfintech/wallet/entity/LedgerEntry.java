@@ -31,6 +31,8 @@ import java.util.UUID;
 public class LedgerEntry {
 
     public static final String RECHARGE = "RECHARGE";
+    public static final String ADJUSTMENT = "ADJUSTMENT";
+    public static final String FEE = "FEE";
 
     @Id
     @GeneratedValue
@@ -57,6 +59,9 @@ public class LedgerEntry {
     @Column(name = "transaction_category", nullable = false, length = 40)
     private String category;
 
+    @Column(name = "description", length = 300)
+    private String description;
+
     @PrePersist
     void onCreate() {
         createdAt = Instant.now();
@@ -66,11 +71,22 @@ public class LedgerEntry {
         return entryType == EntryType.CREDIT ? amount : amount.negate();
     }
 
-    /** Text for the ledger screens, since no description is stored. */
+    /** Text for the ledger screens, falling back to category-derived text when no note is stored. */
     public String describe() {
-        String label = category == null ? "" : category.charAt(0) + category.substring(1).toLowerCase().replace('_', ' ');
+        if (description != null && !description.isBlank()) {
+            return description;
+        }
+        String label = category == null || category.isBlank()
+                ? ""
+                : category.charAt(0) + category.substring(1).toLowerCase().replace('_', ' ');
         if (RECHARGE.equals(category)) {
             return entryType == EntryType.CREDIT ? "Wallet recharge" : "Recharge reversal";
+        }
+        if (ADJUSTMENT.equals(category)) {
+            return entryType == EntryType.CREDIT ? "Manual wallet credit" : "Manual wallet adjustment";
+        }
+        if (FEE.equals(category)) {
+            return entryType == EntryType.DEBIT ? "Convenience fee" : "Fee refund";
         }
         return entryType == EntryType.DEBIT ? label + " bill payment" : label + " refund";
     }

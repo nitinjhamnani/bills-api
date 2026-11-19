@@ -59,16 +59,25 @@ public class OrganisationTransactionsController {
                 row.getType().name(),
                 row.getAmount(),
                 row.getCategory(),
-                describe(row.getCategory(), row.getType()),
+                describe(row.getCategory(), row.getType(), row.getDescription()),
                 counterpartyId,
                 client == null ? counterpartyId : client.getClientName(),
                 counterpartyType,
                 row.getCreatedAt());
     }
 
-    private static String describe(String category, PlatformTransaction.Type type) {
+    private static String describe(String category, PlatformTransaction.Type type, String storedDescription) {
+        if (storedDescription != null && !storedDescription.isBlank()) {
+            return storedDescription;
+        }
         if ("RECHARGE".equals(category)) {
             return "Wallet recharge";
+        }
+        if ("ADJUSTMENT".equals(category)) {
+            return "Manual wallet credit";
+        }
+        if ("FEE".equals(category)) {
+            return type == PlatformTransaction.Type.CREDIT ? "Convenience fee" : "Fee refund";
         }
         if ("BILL_PAID".equals(category)) {
             return "Paid the vendor";

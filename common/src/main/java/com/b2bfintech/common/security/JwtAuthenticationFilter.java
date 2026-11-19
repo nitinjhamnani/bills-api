@@ -68,7 +68,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                             (branchId == null || branchId.isBlank()) ? null : branchId
                     );
 
-                    var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
+                    var authorities = "SUPER_ADMIN".equals(role)
+                            ? List.of(
+                                    new SimpleGrantedAuthority("ROLE_SUPER_ADMIN"),
+                                    new SimpleGrantedAuthority("ROLE_ORGANISATION_ADMIN"))
+                            : List.of(new SimpleGrantedAuthority("ROLE_" + role));
                     var authentication = new UsernamePasswordAuthenticationToken(principal, null, authorities);
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                     request.setAttribute(RequestIds.USER_ATTRIBUTE, principal.userId());

@@ -29,11 +29,13 @@ public class ClientService {
     @Transactional
     public Client create(String clientName, String contactPhone, String email, Client.ClientType clientType,
                           Client.CorporateKind corporateKind) {
-        if (clientType == Client.ClientType.VENDOR) {
-            if (corporateKind != null) {
-                throw new BadRequestException("A vendor is not an individual or a company");
-            }
-        } else if (corporateKind == null) {
+        return create(clientName, contactPhone, email, clientType, corporateKind, null);
+    }
+
+    @Transactional
+    public Client create(String clientName, String contactPhone, String email, Client.ClientType clientType,
+                          Client.CorporateKind corporateKind, String contactPersonName) {
+        if (clientType == Client.ClientType.CORPORATE && corporateKind == null) {
             throw new BadRequestException("Choose individual or company");
         }
         Client client = new Client();
@@ -41,10 +43,12 @@ public class ClientService {
         client.setClientName(clientName);
         client.setContactPhone(contactPhone);
         client.setEmail(blankToNull(email));
+        client.setSigningAuthority(blankToNull(contactPersonName));
         client.setClientType(clientType);
-        client.setCorporateKind(clientType == Client.ClientType.VENDOR ? null : corporateKind);
+        client.setCorporateKind(corporateKind == null ? Client.CorporateKind.COMPANY : corporateKind);
         client.setActive(false);
-        client.setOnboardingStatus("NOT_STARTED");
+        client.setAccountStatus(Client.ClientStatus.PENDING);
+        client.setOnboardingStatus(blankToNull(contactPersonName) != null ? "PENDING" : "NOT_STARTED");
         client.setAgreementStatus("NOT_STARTED");
         client.setAgreementSigned(false);
         return clientRepository.save(client);
@@ -70,6 +74,38 @@ public class ClientService {
     public Client setStatus(String id, Client.ClientStatus status) {
         Client client = getById(id);
         client.setStatus(status);
+        return clientRepository.save(client);
+    }
+
+    @Transactional
+    public Client updateDetails(String id, String clientName, Client.CorporateKind corporateKind) {
+        return updateDetails(id, clientName, corporateKind, null, null, null);
+    }
+
+    @Transactional
+    public Client updateDetails(
+            String id,
+            String clientName,
+            Client.CorporateKind corporateKind,
+            String contactPersonName,
+            String contactEmail,
+            String contactPhone) {
+        Client client = getById(id);
+        if (clientName != null && !clientName.isBlank()) {
+            client.setClientName(clientName.trim());
+        }
+        if (corporateKind != null) {
+            client.setCorporateKind(corporateKind);
+        }
+        if (contactPersonName != null) {
+            client.setSigningAuthority(blankToNull(contactPersonName));
+        }
+        if (contactEmail != null) {
+            client.setEmail(blankToNull(contactEmail));
+        }
+        if (contactPhone != null && !contactPhone.isBlank()) {
+            client.setContactPhone(contactPhone.trim());
+        }
         return clientRepository.save(client);
     }
 

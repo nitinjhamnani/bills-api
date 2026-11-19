@@ -1,8 +1,11 @@
 package com.b2bfintech.app.controller;
 
+import com.b2bfintech.app.service.BranchService;
 import com.b2bfintech.app.service.TenantUserProvisioningService;
 import com.b2bfintech.common.exception.BadRequestException;
+import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.organisation.entity.AppUser;
+import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.organisation.service.TenantUserService;
@@ -16,8 +19,10 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Organisation admin manages organisation-side users (Maker/Checker/Viewer/other Organisation Admins): creation
@@ -31,18 +36,23 @@ public class OrganisationUserController {
 
     private static final Set<String> ASSIGNABLE_ROLES =
             Set.of("ORGANISATION_ADMIN", "MAKER", "CHECKER", "VIEWER", "SALES");
+    private static final Set<String> ASSIGNABLE_CLIENT_ROLES =
+            Set.of("CLIENT_ADMIN", "CLIENT_OPERATOR", "BRANCH_USER");
 
     private final TenantUserService tenantUserService;
     private final TenantUserProvisioningService provisioningService;
     private final ClientService clientService;
+    private final BranchService branchService;
 
     public OrganisationUserController(
             TenantUserService tenantUserService,
             TenantUserProvisioningService provisioningService,
-            ClientService clientService) {
+            ClientService clientService,
+            BranchService branchService) {
         this.tenantUserService = tenantUserService;
         this.provisioningService = provisioningService;
         this.clientService = clientService;
+        this.branchService = branchService;
     }
 
     @PostMapping
@@ -58,50 +68,168 @@ public class OrganisationUserController {
     public List<UserDto> list() {
         return tenantUserService.listAll().stream()
                 .filter(AppUser::isPaytrix)
+                .filter(user -> !user.isSuperAdmin())
                 .map(UserDto::from)
                 .toList();
     }
 
+    @GetMapping("/directory")
+    public List<DirectoryUserDto> directory() {
+        Map<String, Client> clientsById = clientService.listAll().stream()
+                .collect(Collectors.toMap(Client::getId, Function.identity(), (a, b) -> a));
+        return tenantUserService.listAll().stream()
+                .filter(user -> !user.isSuperAdmin())
+                .map(user -> toDirectoryDto(user, clientsById))
+                .toList();
+    }
+
+    private DirectoryUserDto toDirectoryDto(AppUser user, Map<String, Client> clientsById) {
+        if (user.isPaytrix()) {
+            return new DirectoryUserDto(
+                    user.getId(),
+                    user.getUserCode(),
+                    user.getFullName(),
+                    user.getPhoneNumber(),
+                    user.getEmail(),
+                    "PLATFORM",
+                    user.getRole().getName(),
+                    user.getStatus().name(),
+                    null,
+                    null,
+                    null,
+                    List.of());
+        }
+        String orgId = user.organisationId();
+        Client client = orgId == null ? null : clientsById.get(orgId);
+        boolean vendor = user.hasUserType(AppUser.UserType.VENDOR_ADMIN)
+                || user.hasUserType(AppUser.UserType.VENDOR_USER)
+                || (client != null && client.getClientType() == Client.ClientType.VENDOR);
+        String scope = vendor ? "VENDOR" : "CORPORATE";
+        String role = vendor ? user.getRole().getName() : branchService.screenRole(user);
+        List<ClientController.UserBranchDto> branches = List.of();
+        if (!vendor && client != null) {
+            List<Branch> assigned = branchService.branchesForUser(client.getId(), user.getUserId());
+            branches = assigned.stream().map(ClientController.UserBranchDto::from).toList();
+        }
+        return new DirectoryUserDto(
+                user.getId(),
+                user.getUserCode(),
+                user.getFullName(),
+                user.getPhoneNumber(),
+                user.getEmail(),
+                scope,
+                role,
+                user.getStatus().name(),
+                orgId,
+                client == null ? orgId : client.getClientName(),
+                client == null ? orgId : client.getClientCode(),
+                branches);
+    }
+
     @GetMapping("/{id}")
     public UserDetailDto get(@PathVariable String id) {
-        AppUser user = tenantUserService.getById(id);
-        List<AssignedCorporate> corporates = List.of();
-        if (user.hasUserType(AppUser.UserType.ORG_SALES)) {
-            corporates = clientService.listForSalesPerson(id).stream()
-                    .filter(client -> client.getClientType() == Client.ClientType.CORPORATE)
-                    .map(AssignedCorporate::from)
-                    .toList();
-        }
-        return UserDetailDto.from(user, corporates);
+        AppUser user = requireManageableUser(id);
+        return toUserDetailDto(user);
     }
 
     /** Full profile edit - name, email, and role/permissions. Phone number (the login identifier) is immutable. */
     @PutMapping("/{id}")
-    public UserDto update(@PathVariable String id, @Valid @RequestBody UpdateUserRequest request) {
-        validateRole(request.role());
-        AppUser existing = tenantUserService.getById(id);
-        if (existing.hasUserType(AppUser.UserType.ORG_SALES)
-                && !"SALES".equals(request.role())
-                && clientService.hasSalesAssignments(id)) {
-            throw new BadRequestException("This person is still assigned to corporates. Clear those assignments first.");
+    public UserDetailDto update(@PathVariable String id, @Valid @RequestBody UpdateUserRequest request) {
+        AppUser existing = requireManageableUser(id);
+        if (existing.isPaytrix()) {
+            validateRole(request.role());
+            if (existing.hasUserType(AppUser.UserType.ORG_SALES)
+                    && !"SALES".equals(request.role())
+                    && clientService.hasSalesAssignments(id)) {
+                throw new BadRequestException("This person is still assigned to corporates. Clear those assignments first.");
+            }
+        } else {
+            if (!ASSIGNABLE_CLIENT_ROLES.contains(request.role())) {
+                throw new BadRequestException("role must be one of " + ASSIGNABLE_CLIENT_ROLES);
+            }
         }
         AppUser user = provisioningService.updateUserProfile(id, request.fullName(), request.email(), request.role());
-        return UserDto.from(user);
+        return toUserDetailDto(user);
     }
 
     @PatchMapping("/{id}/password")
     public void setPassword(@PathVariable String id, @Valid @RequestBody SetPasswordRequest request) {
+        requireManageableUser(id);
         provisioningService.setUserPassword(id, request.password());
     }
 
     @PatchMapping("/{id}/suspend")
     public void suspend(@PathVariable String id) {
+        requireManageableUser(id);
         provisioningService.suspendUser(id);
     }
 
     @PatchMapping("/{id}/reactivate")
     public void reactivate(@PathVariable String id) {
+        requireManageableUser(id);
         provisioningService.reactivateUser(id);
+    }
+
+    private AppUser requireManageableUser(String id) {
+        AppUser user = tenantUserService.getById(id);
+        if (user.isSuperAdmin()) {
+            throw new ResourceNotFoundException("User not found");
+        }
+        return user;
+    }
+
+    private UserDetailDto toUserDetailDto(AppUser user) {
+        if (user.isPaytrix()) {
+            List<AssignedCorporate> corporates = List.of();
+            if (user.hasUserType(AppUser.UserType.ORG_SALES)) {
+                corporates = clientService.listForSalesPerson(user.getId()).stream()
+                        .filter(client -> client.getClientType() == Client.ClientType.CORPORATE)
+                        .map(AssignedCorporate::from)
+                        .toList();
+            }
+            return new UserDetailDto(
+                    user.getId(),
+                    user.getPhoneNumber(),
+                    user.getUserCode(),
+                    user.getFullName(),
+                    user.getEmail(),
+                    "PLATFORM",
+                    user.getRole().getName(),
+                    user.getStatus().name(),
+                    user.getCreatedOn(),
+                    null,
+                    null,
+                    null,
+                    List.of(),
+                    corporates);
+        }
+        String orgId = user.organisationId();
+        Client client = orgId == null ? null : clientService.find(orgId).orElse(null);
+        boolean vendor = user.hasUserType(AppUser.UserType.VENDOR_ADMIN)
+                || user.hasUserType(AppUser.UserType.VENDOR_USER)
+                || (client != null && client.getClientType() == Client.ClientType.VENDOR);
+        String scope = vendor ? "VENDOR" : "CORPORATE";
+        String role = vendor ? user.getRole().getName() : branchService.screenRole(user);
+        List<ClientController.UserBranchDto> branches = List.of();
+        if (!vendor && client != null) {
+            List<Branch> assigned = branchService.branchesForUser(client.getId(), user.getUserId());
+            branches = assigned.stream().map(ClientController.UserBranchDto::from).toList();
+        }
+        return new UserDetailDto(
+                user.getId(),
+                user.getPhoneNumber(),
+                user.getUserCode(),
+                user.getFullName(),
+                user.getEmail(),
+                scope,
+                role,
+                user.getStatus().name(),
+                user.getCreatedOn(),
+                orgId,
+                client == null ? orgId : client.getClientName(),
+                client == null ? orgId : client.getClientCode(),
+                branches,
+                List.of());
     }
 
     private void validateRole(String role) {
@@ -140,12 +268,34 @@ public class OrganisationUserController {
     }
 
     public record UserDetailDto(
-            String id, String phoneNumber, String userCode, String fullName, String email, String role, String status,
+            String id,
+            String phoneNumber,
+            String userCode,
+            String fullName,
+            String email,
+            String scope,
+            String role,
+            String status,
+            java.time.Instant createdAt,
+            String clientId,
+            String clientName,
+            String clientCode,
+            List<ClientController.UserBranchDto> branches,
             List<AssignedCorporate> corporates) {
-        static UserDetailDto from(AppUser user, List<AssignedCorporate> corporates) {
-            return new UserDetailDto(
-                    user.getId().toString(), user.getPhoneNumber(), user.getUserCode(), user.getFullName(), user.getEmail(),
-                    user.getRole().getName(), user.getStatus().name(), corporates);
-        }
+    }
+
+    public record DirectoryUserDto(
+            String id,
+            String userCode,
+            String fullName,
+            String phoneNumber,
+            String email,
+            String scope,
+            String role,
+            String status,
+            String clientId,
+            String clientName,
+            String clientCode,
+            List<ClientController.UserBranchDto> branches) {
     }
 }

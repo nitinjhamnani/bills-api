@@ -22,14 +22,15 @@ public class MeController {
     }
 
     @GetMapping("/me")
-    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','SALES','CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','SALES','CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
     public MeResponse me(@AuthenticationPrincipal AuthenticatedUser principal) {
         AppUser user = appUserRepository.findByPhoneNumber(principal.phoneNumber())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
+        String role = principal.role() != null ? principal.role() : user.getRole().getName();
         return new MeResponse(
                 user.getId().toString(), user.getFullName(), user.getPhoneNumber(),
-                user.getRole().getName(), "Paytrix", "paytrix");
+                role, "Paytrix", "paytrix");
     }
 
     public record MeResponse(

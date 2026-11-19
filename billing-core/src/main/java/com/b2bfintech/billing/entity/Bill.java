@@ -8,8 +8,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-import jakarta.persistence.Transient;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -74,9 +74,24 @@ public class Bill {
     @JoinColumn(name = "latest_bill_fetch_id")
     private BillFetch latestFetch;
 
-    /** Provider operator reference used for the next fetch. It is not a stored column. */
-    @Transient
+    @Column(name = "operator_id", length = 80)
     private String operatorId;
+
+    @Column(name = "auto_fetch_enabled", nullable = false)
+    private boolean autoFetchEnabled = true;
+
+    @Column(name = "auto_pay_enabled", nullable = false)
+    private boolean autoPayEnabled = false;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @PrePersist
+    void onCreate() {
+        if (createdAt == null) {
+            createdAt = Instant.now();
+        }
+    }
 
     public String getId() {
         return billId;
@@ -197,19 +212,19 @@ public class Bill {
     }
 
     public Instant getCreatedAt() {
-        return getLastFetchAt();
+        return createdAt != null ? createdAt : getLastFetchAt();
     }
 
     public Instant getUpdatedAt() {
-        return getLastFetchAt();
+        return getLastFetchAt() != null ? getLastFetchAt() : createdAt;
     }
 
     public boolean isAutoFetchEnabled() {
-        return true;
+        return autoFetchEnabled;
     }
 
     public boolean isAutoPayEnabled() {
-        return false;
+        return autoPayEnabled;
     }
 
     public String getLastPaidDueDate() {

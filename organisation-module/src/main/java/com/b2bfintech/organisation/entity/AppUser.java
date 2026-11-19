@@ -116,7 +116,12 @@ public class AppUser {
         this.phone = phone;
     }
 
+    public boolean isSuperAdmin() {
+        return userType == UserType.SUPER_ADMIN || userType == UserType.ORG_SUPERADMIN;
+    }
+
     public enum UserType {
+        SUPER_ADMIN,
         ORG_SUPERADMIN,
         ORG_ADMIN,
         ORG_USER,

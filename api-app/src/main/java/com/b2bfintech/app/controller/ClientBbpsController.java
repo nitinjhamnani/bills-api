@@ -24,7 +24,7 @@ import java.util.UUID;
 /** What a client sees while creating a bill: enabled categories, then the operators and fields for the one they pick. */
 @RestController
 @RequestMapping("/api/v1/client/bbps")
-@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
+@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
 public class ClientBbpsController {
 
     private final BbpsCategoryRepository categoryRepository;
@@ -44,12 +44,14 @@ public class ClientBbpsController {
     }
 
     @GetMapping("/categories")
-    public List<ClientCategoryController.ClientCategoryDto> categories(@AuthenticationPrincipal AuthenticatedUser principal) {
-        String clientId = requiredClient(principal);
+    public List<ClientCategoryController.ClientCategoryDto> categories(
+            @RequestParam(required = false) String clientId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        String resolvedClientId = resolveClient(principal, clientId);
         return activeCategories().stream()
                 .filter(category -> {
                     try {
-                        enablementService.assertEnabled(clientId, category.categoryId());
+                        enablementService.assertEnabled(resolvedClientId, category.categoryId());
                         return true;
                     } catch (BadRequestException ex) {
                         return false;
@@ -62,8 +64,9 @@ public class ClientBbpsController {
     @GetMapping("/billers")
     public BillerListDto billers(@RequestParam String categoryId,
                                  @RequestParam(required = false) String q,
+                                 @RequestParam(required = false) String clientId,
                                  @AuthenticationPrincipal AuthenticatedUser principal) {
-        enablementService.assertEnabled(requiredClient(principal), categoryId);
+        enablementService.assertEnabled(resolveClient(principal, clientId), categoryId);
         List<BillerDto> operators = lookupService.billers(categoryId).stream()
                 .map(biller -> new BillerDto(biller.billerId(), biller.name(), biller.categoryId()))
                 .toList();
@@ -72,9 +75,11 @@ public class ClientBbpsController {
     }
 
     @GetMapping("/billers/{billerId}/parameters")
-    public List<ParameterDto> parameters(@PathVariable String billerId, @RequestParam String categoryId,
+    public List<ParameterDto> parameters(@PathVariable String billerId,
+                                         @RequestParam String categoryId,
+                                         @RequestParam(required = false) String clientId,
                                          @AuthenticationPrincipal AuthenticatedUser principal) {
-        enablementService.assertEnabled(requiredClient(principal), categoryId);
+        enablementService.assertEnabled(resolveClient(principal, clientId), categoryId);
         List<BbpsProvider.ProviderBillerParameter> parameters = lookupService.parameters(categoryId, billerId);
         if (parameters.isEmpty()) {
             throw new BadRequestException("This biller does not publish any bill fields, so a bill cannot be fetched");
@@ -94,7 +99,10 @@ public class ClientBbpsController {
         return categoryRepository.findAllActive();
     }
 
-    private static String requiredClient(AuthenticatedUser principal) {
+    private static String resolveClient(AuthenticatedUser principal, String requestedClientId) {
+        if (!principal.isClientUser()) {
+            return (requestedClientId == null || requestedClientId.isBlank()) ? null : requestedClientId.trim();
+        }
         if (principal.clientId() == null || principal.clientId().isBlank()) {
             throw new BadRequestException("This action is only available to a client user");
         }

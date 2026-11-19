@@ -11,7 +11,7 @@ import java.util.List;
 /** Organisation-to-client convenience fee configuration, optionally per bill service (implementation plan &sect;8.2). */
 @RestController
 @RequestMapping("/api/v1/paytrix/fee-config")
-@PreAuthorize("hasRole('ORGANISATION_ADMIN')")
+@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
 public class FeeConfigController {
 
     private final FeeConfigService feeConfigService;
@@ -26,6 +26,7 @@ public class FeeConfigController {
     }
 
     @PutMapping
+    @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
     public FeeDto upsert(@RequestBody UpsertRequest request) {
         var config = feeConfigService.upsert(request.billServiceCode(), request.feeType(), request.value(), request.enabled());
         return FeeDto.from(config);

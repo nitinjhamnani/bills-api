@@ -126,7 +126,8 @@ final class BillDtos {
             Instant lastFetchAt, boolean lastFetchFailed, String lastFetchFailureReason,
             boolean autoFetchEnabled, boolean autoPayEnabled,
             Instant createdAt, Instant updatedAt,
-            String branchId, String branchName) {
+            String branchId, String branchName,
+            String latestBillFetchId) {
 
         static ManagedBillDto from(Bill b, Function<String, String> serviceNameLookup) {
             return from(b, serviceNameLookup, null, null, null);
@@ -156,7 +157,42 @@ final class BillDtos {
                     b.isAutoFetchEnabled(), b.isAutoPayEnabled(),
                     b.getCreatedAt(), b.getUpdatedAt(),
                     b.getBranchId(),
-                    branchNameLookup == null || b.getBranchId() == null ? null : branchNameLookup.apply(b.getBranchId()));
+                    branchNameLookup == null || b.getBranchId() == null ? null : branchNameLookup.apply(b.getBranchId()),
+                    b.getLatestFetch() == null || b.getLatestFetch().getBillFetchId() == null
+                            ? null
+                            : b.getLatestFetch().getBillFetchId().toString());
+        }
+    }
+
+    record BillFetchDto(
+            String billFetchId,
+            String billId,
+            BigDecimal billAmount,
+            String billCycle,
+            String billDueDate,
+            String billGeneratedDate,
+            String billConsumerName,
+            String billStatus,
+            String billPaymentStatus,
+            Instant fetchedOn,
+            String fetchStatus,
+            String fetchRemarks,
+            String fetchProvider) {
+        static BillFetchDto from(BillFetch f) {
+            return new BillFetchDto(
+                    f.getBillFetchId().toString(),
+                    f.getBillId(),
+                    f.getBillAmount(),
+                    f.getBillCycle(),
+                    f.getBillDueDate() == null ? null : f.getBillDueDate().toString(),
+                    f.getBillGeneratedDate() == null ? null : f.getBillGeneratedDate().toString(),
+                    f.getBillConsumerName(),
+                    f.getBillStatus() == null ? null : f.getBillStatus().name(),
+                    f.getBillPaymentStatus() == null ? null : f.getBillPaymentStatus().name(),
+                    f.getFetchedOn(),
+                    f.getFetchStatus() == null ? null : f.getFetchStatus().name(),
+                    f.getFetchRemarks(),
+                    f.getFetchProvider());
         }
     }
 

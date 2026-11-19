@@ -2,7 +2,9 @@ package com.b2bfintech.app.controller;
 
 import com.b2bfintech.app.service.BillActivityLogService;
 import com.b2bfintech.billing.entity.Bill;
+import com.b2bfintech.billing.entity.BillFetch;
 import com.b2bfintech.billing.entity.BillPayment;
+import com.b2bfintech.billing.repository.BillFetchRepository;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
@@ -33,6 +35,7 @@ import java.util.stream.Collectors;
 public class OrganisationManagedBillsController {
 
     private final BillRepository billRepository;
+    private final BillFetchRepository billFetchRepository;
     private final BillPaymentRepository billPaymentRepository;
     private final ClientRepository clientRepository;
     private final BillActivityLogService activityLogService;
@@ -40,9 +43,15 @@ public class OrganisationManagedBillsController {
     private final BranchRepository branchRepository;
 
     public OrganisationManagedBillsController(
-            BillRepository billRepository, BillPaymentRepository billPaymentRepository, ClientRepository clientRepository,
-            BillActivityLogService activityLogService, CategoryLabels categoryLabels, BranchRepository branchRepository) {
+            BillRepository billRepository,
+            BillFetchRepository billFetchRepository,
+            BillPaymentRepository billPaymentRepository,
+            ClientRepository clientRepository,
+            BillActivityLogService activityLogService,
+            CategoryLabels categoryLabels,
+            BranchRepository branchRepository) {
         this.billRepository = billRepository;
+        this.billFetchRepository = billFetchRepository;
         this.billPaymentRepository = billPaymentRepository;
         this.clientRepository = clientRepository;
         this.activityLogService = activityLogService;
@@ -63,9 +72,41 @@ public class OrganisationManagedBillsController {
         return bills.stream().map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes, branches)).toList();
     }
 
+    /** Every corporate bill whose latest fetch succeeded and is currently due/unpaid. */
+    @GetMapping("/dues")
+    public List<BillDtos.ManagedBillDto> listDues(@RequestParam(required = false) String clientId) {
+        Function<String, String> serviceNames = categoryLabels.lookup();
+        Function<String, String> clientNames = BillDtos.clientNameLookup(clientRepository);
+        Function<String, String> clientCodes = BillDtos.clientCodeLookup(clientRepository);
+        List<Bill> bills = clientId != null
+                ? billRepository.findByClientIdOrderByCreatedAtDesc(clientId)
+                : billRepository.findAllByOrderByBillIdDesc();
+        Function<String, String> branches = branchNames();
+        return bills.stream()
+                .filter(OrganisationManagedBillsController::isDueBill)
+                .map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes, branches))
+                .toList();
+    }
+
+    private static boolean isDueBill(Bill bill) {
+        BillFetch fetch = bill.getLatestFetch();
+        if (fetch == null) return false;
+        if (fetch.getFetchStatus() != BillFetch.FetchStatus.SUCCESS) return false;
+        if (fetch.getBillPaymentStatus() != BillFetch.PaymentStatus.PENDING) return false;
+        return fetch.getBillStatus() == BillFetch.BillStatus.DUE
+                || (fetch.getBillAmount() != null && fetch.getBillAmount().compareTo(java.math.BigDecimal.ZERO) > 0);
+    }
+
     @GetMapping("/{billId}")
     public BillDtos.ManagedBillDto get(@PathVariable String billId) {
         return toDto(getOrThrow(billId));
+    }
+
+    @GetMapping("/fetches/{fetchId}")
+    public BillDtos.BillFetchDto getFetch(@PathVariable UUID fetchId) {
+        BillFetch fetch = billFetchRepository.findById(fetchId)
+                .orElseThrow(() -> new ResourceNotFoundException("Bill fetch not found"));
+        return BillDtos.BillFetchDto.from(fetch);
     }
 
     @GetMapping("/{billId}/payments")

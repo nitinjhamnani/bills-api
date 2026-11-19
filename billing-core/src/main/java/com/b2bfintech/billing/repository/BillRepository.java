@@ -17,7 +17,7 @@ public interface BillRepository extends JpaRepository<Bill, String> {
 
     List<Bill> findAllByOrderByBillIdDesc();
 
-    @Query("select b from Bill b where b.inputParamJson is not null")
+    @Query("select b from Bill b where b.autoFetchEnabled = true and b.inputParamJson is not null")
     List<Bill> findByAutoFetchEnabledTrue();
 
     Optional<Bill> findFirstBySourceIdAndCategoryNameAndOperatorNameAndPrimaryParamValue(
@@ -34,9 +34,14 @@ public interface BillRepository extends JpaRepository<Bill, String> {
     @Query("select count(b) from Bill b where b.latestFetch.fetchStatus = :status")
     long countByFetchStatus(@Param("status") BillFetch.FetchStatus status);
 
-    @Query("select count(b) from Bill b where b.sourceId = :clientId and b.latestFetch.billPaymentStatus = :status")
-    long countByClientIdAndFetchPaymentStatus(@Param("clientId") String clientId,
-                                               @Param("status") BillFetch.PaymentStatus status);
+    @Query("select count(b) from Bill b where b.sourceId = :clientId and b.latestFetch.fetchStatus = :fetchStatus and b.latestFetch.billPaymentStatus = :status")
+    long countByClientIdAndFetchStatusAndPaymentStatus(@Param("clientId") String clientId,
+                                                       @Param("fetchStatus") BillFetch.FetchStatus fetchStatus,
+                                                       @Param("status") BillFetch.PaymentStatus status);
+
+    default long countByClientIdAndFetchPaymentStatus(String clientId, BillFetch.PaymentStatus status) {
+        return countByClientIdAndFetchStatusAndPaymentStatus(clientId, BillFetch.FetchStatus.SUCCESS, status);
+    }
 
     @Query("""
             select count(b) from Bill b
@@ -53,9 +58,14 @@ public interface BillRepository extends JpaRepository<Bill, String> {
     BigDecimal sumAmountByClientIdAndFetchStatus(@Param("clientId") String clientId,
                                                   @Param("status") BillFetch.BillStatus status);
 
-    @Query("select coalesce(sum(f.billAmount), 0) from Bill b join b.latestFetch f where b.sourceId = :clientId and f.billPaymentStatus = :status")
-    BigDecimal sumAmountByClientIdAndFetchPaymentStatus(@Param("clientId") String clientId,
-                                                         @Param("status") BillFetch.PaymentStatus status);
+    @Query("select coalesce(sum(f.billAmount), 0) from Bill b join b.latestFetch f where b.sourceId = :clientId and f.fetchStatus = :fetchStatus and f.billPaymentStatus = :status")
+    BigDecimal sumAmountByClientIdAndFetchStatusAndPaymentStatus(@Param("clientId") String clientId,
+                                                                 @Param("fetchStatus") BillFetch.FetchStatus fetchStatus,
+                                                                 @Param("status") BillFetch.PaymentStatus status);
+
+    default BigDecimal sumAmountByClientIdAndFetchPaymentStatus(String clientId, BillFetch.PaymentStatus status) {
+        return sumAmountByClientIdAndFetchStatusAndPaymentStatus(clientId, BillFetch.FetchStatus.SUCCESS, status);
+    }
 
     @Query("select coalesce(sum(f.billAmount), 0) from Bill b join b.latestFetch f where b.sourceId = :clientId")
     BigDecimal sumAmountByClientId(@Param("clientId") String clientId);

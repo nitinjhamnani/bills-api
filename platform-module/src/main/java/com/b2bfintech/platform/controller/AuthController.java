@@ -48,13 +48,19 @@ public class AuthController {
 
     private LoginResponseDto toResponse(AuthService.LoginResult result) {
         AppUser user = result.user();
+        String clientType = null;
+        if (user.hasUserType(AppUser.UserType.VENDOR_ADMIN) || user.hasUserType(AppUser.UserType.VENDOR_USER)) {
+            clientType = "VENDOR";
+        } else if (user.hasUserType(AppUser.UserType.CORP_ADMIN) || user.hasUserType(AppUser.UserType.CORP_USER)) {
+            clientType = "CORPORATE";
+        }
         return new LoginResponseDto(
                 result.accessToken(),
                 "Bearer",
                 result.expiresInSeconds(),
                 new LoginResponseDto.UserProfileDto(
                         user.getUserId(), user.getPhone(), user.getUserId(), user.getName(), result.role(), null,
-                        result.clientId(), result.branchId())
+                        result.clientId(), result.branchId(), clientType)
         );
     }
 

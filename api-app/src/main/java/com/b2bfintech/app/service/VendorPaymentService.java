@@ -10,7 +10,7 @@ import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.document.DocumentStorageService;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
-import com.b2bfintech.common.exception.UnauthorizedException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -205,7 +205,7 @@ public class VendorPaymentService {
             BillPayment payment = billPaymentRepository.findById(paymentId)
                     .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
             if (payment.getAssignedVendorClientId() == null || !payment.getAssignedVendorClientId().equals(vendorClientId)) {
-                throw new UnauthorizedException("One of these bills is not assigned to your account");
+                throw new AccessDeniedException("One of these bills is not assigned to your account");
             }
             if (payment.getOrgStatus() != BillPayment.OrgStatus.PENDING) {
                 throw new BadRequestException("Send back only bills that are still waiting for you");
@@ -246,7 +246,7 @@ public class VendorPaymentService {
         BillPayment payment = billPaymentRepository.findById(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
         if (payment.getAssignedVendorClientId() == null || !payment.getAssignedVendorClientId().equals(vendorClientId)) {
-            throw new UnauthorizedException("This bill is not assigned to your account");
+            throw new AccessDeniedException("This bill is not assigned to your account");
         }
         return payment;
     }

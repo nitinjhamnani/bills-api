@@ -67,7 +67,7 @@ public class OrganisationWalletController {
         Client client = clientRepository.findById(clientId)
                 .orElseThrow(() -> new BadRequestException("Unknown client"));
         clientAccountGuard.requireWalletClient(clientId);
-        walletService.credit(clientId, request.amount(), LedgerEntry.RECHARGE, principal.userId());
+        walletService.credit(clientId, request.amount(), LedgerEntry.ADJUSTMENT, principal.userId(), request.note());
         auditService.record("WALLET_MANUAL_CREDIT", "Client", clientId.toString(),
                 "credited " + request.amount() + " - " + request.note());
         return new ClientWalletDto(client.getId().toString(), client.getClientName(), client.getClientCode(),

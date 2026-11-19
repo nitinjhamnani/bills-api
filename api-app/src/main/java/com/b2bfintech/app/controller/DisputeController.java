@@ -6,7 +6,9 @@ import com.b2bfintech.billing.entity.BillDispute;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
+import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.common.security.AuthenticatedUser;
+import com.b2bfintech.common.security.ClientScopeGuard;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.app.service.CategoryLabels;
 import jakarta.validation.constraints.NotBlank;
@@ -45,11 +47,16 @@ public class DisputeController {
     @ResponseStatus(HttpStatus.CREATED)
     public DisputeDto raise(@PathVariable UUID billPaymentId, @RequestBody RaiseRequest request,
                              @AuthenticationPrincipal AuthenticatedUser principal) {
-        return toDto(disputeService.raise(billPaymentId, request.reason(), principal.phoneNumber()));
+        return toDto(disputeService.raise(billPaymentId, request.reason(), principal.phoneNumber(), principal.clientId()));
     }
 
     @GetMapping("/api/v1/bill-payments/{billPaymentId}/disputes")
-    public List<DisputeDto> listForBillPayment(@PathVariable UUID billPaymentId) {
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
+    public List<DisputeDto> listForBillPayment(@PathVariable UUID billPaymentId,
+                                               @AuthenticationPrincipal AuthenticatedUser principal) {
+        BillPayment payment = billPaymentRepository.findById(billPaymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
+        ClientScopeGuard.assertCanAccess(principal, payment.getClientId());
         return disputeService.listForBillPayment(billPaymentId).stream().map(this::toDto).toList();
     }
 

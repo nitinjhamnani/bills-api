@@ -150,7 +150,11 @@ public class ReportQueryService {
                     Object[] agg = aggregates.get(c.getId());
                     long bills = agg == null ? 0L : ((Number) agg[1]).longValue();
                     BigDecimal settled = agg == null ? BigDecimal.ZERO : decimal(agg[2]);
-                    BigDecimal outstanding = agg == null ? BigDecimal.ZERO : decimal(agg[3]);
+                    BigDecimal outstanding = c.getClientType() == Client.ClientType.VENDOR
+                            ? BigDecimal.ZERO
+                            : billFetchRepository.findDues(c.getId()).stream()
+                                    .map(f -> f.getBillAmount() == null ? BigDecimal.ZERO : f.getBillAmount())
+                                    .reduce(BigDecimal.ZERO, BigDecimal::add);
                     BigDecimal pending = agg == null ? BigDecimal.ZERO : decimal(agg[4]);
                     WalletAccount wallet = c.getClientType() == Client.ClientType.VENDOR ? null : wallets.get(c.getId());
                     return new ReportDtos.ClientPortfolioRowDto(
@@ -236,9 +240,25 @@ public class ReportQueryService {
                 .toList();
     }
 
-    /** Fee debits are stored under the bill's category, so they cannot be told apart from bill debits. */
+    /** Convenience fee debits collected from corporate wallets (`FEE` category). */
     public List<ReportDtos.RevenueRowDto> revenue(Instant from, Instant to, String clientId) {
-        return List.of();
+        Map<String, Client> clients = clientsById();
+        return cap(ledgerEntryRepository.findByCategoryAndEntryTypeAndCreatedAtBetweenOrderByCreatedAtDesc(
+                        LedgerEntry.FEE, LedgerEntry.EntryType.DEBIT, from, to)
+                .stream()
+                .filter(e -> clientId == null || clientId.equals(e.getWalletAccount().getClientId()))
+                .map(e -> {
+                    String cid = e.getWalletAccount().getClientId();
+                    Client c = clients.get(cid);
+                    return new ReportDtos.RevenueRowDto(
+                            cid,
+                            c != null ? c.getClientName() : "Unknown client",
+                            c != null ? c.getClientCode() : null,
+                            e.getAmount(),
+                            e.describe(),
+                            e.getCreatedAt());
+                })
+                .toList());
     }
 
     public List<ReportDtos.RevenueByClientRowDto> revenueByClient(Instant from, Instant to, String clientId) {
@@ -267,9 +287,25 @@ public class ReportQueryService {
                 .toList());
     }
 
-    /** Paytrix manual credits are stored as RECHARGE, like approved top-ups, so they cannot be listed apart. */
+    /** Paytrix manual wallet credits (`ADJUSTMENT` category). */
     public List<ReportDtos.AdjustmentRowDto> fundingAdjustments(Instant from, Instant to, String clientId) {
-        return List.of();
+        Map<String, Client> clients = clientsById();
+        return cap(ledgerEntryRepository.findByCategoryAndEntryTypeAndCreatedAtBetweenOrderByCreatedAtDesc(
+                        LedgerEntry.ADJUSTMENT, LedgerEntry.EntryType.CREDIT, from, to)
+                .stream()
+                .filter(e -> clientId == null || clientId.equals(e.getWalletAccount().getClientId()))
+                .map(e -> {
+                    String cid = e.getWalletAccount().getClientId();
+                    Client c = clients.get(cid);
+                    return new ReportDtos.AdjustmentRowDto(
+                            cid,
+                            c != null ? c.getClientName() : "Unknown client",
+                            c != null ? c.getClientCode() : null,
+                            e.getAmount(),
+                            e.describe(),
+                            e.getCreatedAt());
+                })
+                .toList());
     }
 
     private List<BillDtos.BillPaymentDto> toPaymentDtos(List<BillPayment> payments) {

@@ -5,9 +5,11 @@ import com.b2bfintech.common.exception.UnauthorizedException;
 import com.b2bfintech.common.security.JwtService;
 import com.b2bfintech.common.spi.OtpProvider;
 import com.b2bfintech.organisation.entity.AppUser;
+import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.entity.UserTypes;
 import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.BranchMembershipRepository;
+import com.b2bfintech.organisation.repository.ClientRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -20,6 +22,7 @@ public class AuthService {
 
     private final AppUserRepository appUserRepository;
     private final BranchMembershipRepository membershipRepository;
+    private final ClientRepository clientRepository;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final OtpProvider otpProvider;
@@ -28,12 +31,14 @@ public class AuthService {
     public AuthService(
             AppUserRepository appUserRepository,
             BranchMembershipRepository membershipRepository,
+            ClientRepository clientRepository,
             JwtService jwtService,
             PasswordEncoder passwordEncoder,
             OtpProvider otpProvider,
             @Value("${app.auth.demo-password:Password@123}") String demoPassword) {
         this.appUserRepository = appUserRepository;
         this.membershipRepository = membershipRepository;
+        this.clientRepository = clientRepository;
         this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
         this.otpProvider = otpProvider;
@@ -46,14 +51,13 @@ public class AuthService {
         }
         AppUser user = appUserRepository.findByPhoneNumberOrEmail(identifier.trim())
                 .orElseThrow(() -> new UnauthorizedException("Invalid phone/email or password"));
-        if (branchOnly(user) && (user.getPassword() == null || user.getPassword().isBlank())) {
+        boolean blankStored = user.getPassword() == null || user.getPassword().isBlank();
+        boolean matchesDemo = demoPassword != null && !demoPassword.isBlank() && demoPassword.equals(password);
+        if (blankStored && (branchOnly(user) || !matchesDemo)) {
             throw new UnauthorizedException("Set a password before signing in");
         }
 
-        boolean matchesStored = user.getPassword() != null
-                && !user.getPassword().isBlank()
-                && passwordEncoder.matches(password, user.getPassword());
-        boolean matchesDemo = demoPassword != null && !demoPassword.isBlank() && demoPassword.equals(password);
+        boolean matchesStored = !blankStored && passwordEncoder.matches(password, user.getPassword());
         if (!matchesStored && !matchesDemo) {
             throw new UnauthorizedException("Invalid phone/email or password");
         }
@@ -65,10 +69,17 @@ public class AuthService {
         if (!user.isActive()) {
             throw new UnauthorizedException("This account is suspended. Contact your admin.");
         }
+        String clientId = user.isPaytrix() ? null : user.getUserOrgId();
+        if (clientId != null) {
+            clientRepository.findById(clientId).ifPresent(client -> {
+                if (client.getStatus() == Client.ClientStatus.TERMINATED) {
+                    throw new UnauthorizedException("This client account has been terminated.");
+                }
+            });
+        }
         List<String> branches = membershipRepository.findBranchIdsByUserId(user.getUserId());
         String branchId = branches.isEmpty() ? null : branches.get(0);
         String role = tokenRole(user, branches);
-        String clientId = user.isPaytrix() ? null : user.getUserOrgId();
         String token = jwtService.generateAccessToken(
                 user.getUserId(), user.getPhone(), user.getUserId(), null, role,
                 user.getName(), clientId, branchId);
@@ -110,8 +121,8 @@ public class AuthService {
         }
         AppUser user = appUserRepository.findByPhoneNumber(phoneNumber)
                 .orElseThrow(() -> new BadRequestException("This phone is not waiting to set a password"));
-        if (!branchOnly(user) || (user.getPassword() != null && !user.getPassword().isBlank())) {
-            throw new BadRequestException("This phone is not waiting to set a password");
+        if (user.getPassword() != null && !user.getPassword().isBlank()) {
+            throw new BadRequestException("This phone already has a password set");
         }
         if (!user.isActive()) {
             throw new BadRequestException("This account is suspended. Contact your admin.");

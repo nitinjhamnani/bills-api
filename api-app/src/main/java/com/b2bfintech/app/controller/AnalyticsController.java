@@ -7,6 +7,8 @@ import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.security.ClientScopeGuard;
 import com.b2bfintech.common.security.AuthenticatedUser;
+import com.b2bfintech.organisation.repository.AppUserRepository;
+import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.wallet.entity.WalletAccount;
 import com.b2bfintech.wallet.service.WalletService;
@@ -27,14 +29,19 @@ public class AnalyticsController {
     private final BillRepository billRepository;
     private final BillPaymentRepository billPaymentRepository;
     private final WalletService walletService;
+    private final BranchRepository branchRepository;
+    private final AppUserRepository appUserRepository;
 
     public AnalyticsController(
             ClientRepository clientRepository, BillRepository billRepository,
-            BillPaymentRepository billPaymentRepository, WalletService walletService) {
+            BillPaymentRepository billPaymentRepository, WalletService walletService,
+            BranchRepository branchRepository, AppUserRepository appUserRepository) {
         this.clientRepository = clientRepository;
         this.billRepository = billRepository;
         this.billPaymentRepository = billPaymentRepository;
         this.walletService = walletService;
+        this.branchRepository = branchRepository;
+        this.appUserRepository = appUserRepository;
     }
 
     /** Client count, the My Payments funnel, and total GMV. */
@@ -80,7 +87,9 @@ public class AnalyticsController {
                 billRepository.sumAmountByClientIdAndFetchPaymentStatus(clientId, com.b2bfintech.billing.entity.BillFetch.PaymentStatus.PAID),
                 billRepository.countByClientIdAndFetchStatus(clientId, com.b2bfintech.billing.entity.BillFetch.BillStatus.PAID),
                 billRepository.sumAmountByClientIdAndFetchStatus(clientId, com.b2bfintech.billing.entity.BillFetch.BillStatus.PAID),
-                wallet);
+                wallet,
+                branchRepository.countBySourceId(clientId),
+                appUserRepository.countByUserOrgId(clientId));
     }
 
     public record OrganisationAnalyticsDto(long clientCount, long billsPendingPickup, long billsInProcess,
@@ -92,6 +101,8 @@ public class AnalyticsController {
             long pendingBills, BigDecimal pendingAmount,
             long paidBills, BigDecimal paidAmount,
             long completedBills, BigDecimal completedAmount,
-            BigDecimal walletBalance) {
+            BigDecimal walletBalance,
+            long branchCount,
+            long userCount) {
     }
 }

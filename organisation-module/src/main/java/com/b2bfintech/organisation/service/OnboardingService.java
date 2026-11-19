@@ -42,8 +42,10 @@ public class OnboardingService {
         if (name != null) {
             client.setClientName(name);
         }
+        client.setRegistrationNumber(blankToNull(registrationNumber));
         client.setAddress(blankToNull(registeredAddress));
-        if (client.getClientType() == Client.ClientType.CORPORATE && "NOT_STARTED".equals(client.getOnboardingStatus())) {
+        client.setSigningAuthority(blankToNull(signingAuthority));
+        if ("NOT_STARTED".equals(client.getOnboardingStatus())) {
             client.setOnboardingStatus("PENDING");
         }
         if ("NOT_STARTED".equals(client.getAgreementStatus())) {
@@ -58,25 +60,15 @@ public class OnboardingService {
         if (client.getStatus() == Client.ClientStatus.TERMINATED) {
             throw new BadRequestException("This account is closed");
         }
-        boolean detailsMissing = client.getClientType() == Client.ClientType.VENDOR
-                ? "NOT_STARTED".equals(client.getAgreementStatus())
-                : "NOT_STARTED".equals(client.getOnboardingStatus());
-        if (detailsMissing) {
-            throw new BadRequestException(client.getCorporateKind() == Client.CorporateKind.INDIVIDUAL
-                    ? "Add personal information before eKYC"
-                    : "Add company information before eKYC");
+        client.setOnboardingStatus("COMPLETE");
+        if ("NOT_STARTED".equals(client.getAgreementStatus())) {
+            client.setAgreementStatus("PENDING");
         }
-        if (client.getClientType() == Client.ClientType.CORPORATE) {
-            client.setOnboardingStatus("COMPLETE");
-            if ("NOT_STARTED".equals(client.getAgreementStatus())) {
-                client.setAgreementStatus("PENDING");
-            }
-            client = clientService.save(client);
-        }
+        client = clientService.save(client);
         return ClientOnboarding.from(client);
     }
 
-    /** Signing the contract is the last step. A client still waiting to be activated becomes active. */
+    /** Marks the agreement as signed. Explicit activation happens when the admin clicks Mark as active. */
     @Transactional
     public ClientOnboarding markContractSigned(String clientId) {
         Client client = clientService.getById(clientId);
@@ -85,16 +77,11 @@ public class OnboardingService {
         }
         ClientOnboarding current = ClientOnboarding.from(client);
         if (current.getKycStatus() != ClientOnboarding.KycStatus.COMPLETE) {
-            throw new BadRequestException("Complete eKYC before the contract");
+            throw new BadRequestException("Complete verification before signing the agreement");
         }
-        boolean wasPending = client.getStatus() == Client.ClientStatus.PENDING;
         client.setAgreementStatus("SIGNED");
         client.setAgreementSigned(true);
         client = clientService.save(client);
-        if (wasPending) {
-            clientService.setStatus(clientId, Client.ClientStatus.ACTIVE);
-            client = clientService.getById(clientId);
-        }
         return ClientOnboarding.from(client);
     }
 

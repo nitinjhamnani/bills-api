@@ -37,9 +37,17 @@ public class DisputeService {
     }
 
     @Transactional
-    public BillDispute raise(UUID billPaymentId, String reason, String raisedBy) {
-        if (!billPaymentRepository.existsById(billPaymentId)) {
+    public BillDispute raise(UUID billPaymentId, String reason, String raisedBy, String expectedClientId) {
+        BillPayment payment = billPaymentRepository.findById(billPaymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
+        if (expectedClientId != null && !expectedClientId.equals(payment.getClientId())) {
             throw new ResourceNotFoundException("Bill payment not found");
+        }
+        boolean hasOpenDispute = disputeRepository.findByBillPaymentId(billPaymentId).stream()
+                .anyMatch(d -> d.getStatus() == BillDispute.Status.RAISED
+                        || d.getStatus() == BillDispute.Status.UNDER_REVIEW);
+        if (hasOpenDispute) {
+            throw new BadRequestException("An open dispute already exists for this bill payment");
         }
         BillDispute dispute = new BillDispute();
         dispute.setBillPaymentId(billPaymentId);
