@@ -16,25 +16,13 @@ import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import com.b2bfintech.common.spi.bbps.BillParameterValidator;
 import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.ClientCategoryConfig;
+import com.b2bfintech.organisation.entity.OrganisationCategoryConfig;
 import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
-import org.apache.poi.ss.usermodel.Cell;
-import org.apache.poi.ss.usermodel.CellStyle;
-import org.apache.poi.ss.usermodel.DataFormatter;
-import org.apache.poi.ss.usermodel.DataValidation;
-import org.apache.poi.ss.usermodel.DataValidationConstraint;
-import org.apache.poi.ss.usermodel.DataValidationHelper;
-import org.apache.poi.ss.usermodel.Font;
-import org.apache.poi.ss.usermodel.Row;
-import org.apache.poi.ss.usermodel.Sheet;
-import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.ss.usermodel.WorkbookFactory;
-import org.apache.poi.ss.util.CellRangeAddressList;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -45,11 +33,12 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -115,75 +104,39 @@ public class ManagedBillController {
     public ResponseEntity<byte[]> bulkTemplate(@PathVariable String clientId,
                                                 @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        Map<String, String> names = categoryLabels.names();
-        List<String> categoryNames = categoryEnablementService.listClientRows(clientId).stream()
-                .filter(ClientCategoryConfig::isEnabled)
-                .map(c -> names.getOrDefault(c.getCategoryId(), c.getCategoryId()))
-                .sorted()
-                .toList();
-        List<String> billerNames = List.of();
-        byte[] xlsx = buildBulkTemplateWorkbook(categoryNames, billerNames);
+        byte[] xlsx = ManagedBillBulkTemplate.workbook(templateOptions(clientId));
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"managed-bills-upload-template.xlsx\"")
                 .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                 .body(xlsx);
     }
 
-    private static byte[] buildBulkTemplateWorkbook(List<String> categories, List<String> billers) throws IOException {
-        try (XSSFWorkbook workbook = new XSSFWorkbook()) {
-            Sheet sheet = workbook.createSheet("Bills");
-            String[] headers = {"Category", "Service Provider", "Consumer ID / Number"};
-            Font headerFont = workbook.createFont();
-            headerFont.setBold(true);
-            CellStyle headerStyle = workbook.createCellStyle();
-            headerStyle.setFont(headerFont);
-            Row headerRow = sheet.createRow(0);
-            for (int i = 0; i < headers.length; i++) {
-                Cell cell = headerRow.createCell(i);
-                cell.setCellValue(headers[i]);
-                cell.setCellStyle(headerStyle);
-                sheet.setColumnWidth(i, 26 * 256);
-            }
+    /** Categories Paytrix has switched on for this company, with each category's active service providers. */
+    private List<ManagedBillBulkTemplate.CategoryProviders> templateOptions(String clientId) {
+        Map<String, String> names = categoryLabels.names();
+        Set<String> disabledForClient = categoryEnablementService.listClientRows(clientId).stream()
+                .filter(row -> !row.isEnabled())
+                .map(ClientCategoryConfig::getCategoryId)
+                .collect(Collectors.toSet());
+        return categoryEnablementService.listOrganisation().stream()
+                .filter(OrganisationCategoryConfig::isEnabled)
+                .map(OrganisationCategoryConfig::getCategoryId)
+                .filter(categoryId -> !disabledForClient.contains(categoryId))
+                .map(categoryId -> new ManagedBillBulkTemplate.CategoryProviders(
+                        names.getOrDefault(categoryId, categoryId),
+                        serviceProviders(categoryId)))
+                .sorted(Comparator.comparing(ManagedBillBulkTemplate.CategoryProviders::category, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+    }
 
-            Sheet listSheet = workbook.createSheet("Lists");
-            int listRows = Math.max(Math.max(categories.size(), billers.size()), 1);
-            for (int i = 0; i < listRows; i++) {
-                Row row = listSheet.createRow(i);
-                if (i < categories.size()) row.createCell(0).setCellValue(categories.get(i));
-                if (i < billers.size()) row.createCell(1).setCellValue(billers.get(i));
-            }
-            workbook.setSheetHidden(workbook.getSheetIndex(listSheet), true);
-
-            var categoryRange = workbook.createName();
-            categoryRange.setNameName("CategoryList");
-            categoryRange.setRefersToFormula("Lists!$A$1:$A$" + Math.max(categories.size(), 1));
-
-            var billerRange = workbook.createName();
-            billerRange.setNameName("BillerList");
-            billerRange.setRefersToFormula("Lists!$B$1:$B$" + Math.max(billers.size(), 1));
-
-            DataValidationHelper dvHelper = sheet.getDataValidationHelper();
-            int lastDataRow = 500;
-
-            DataValidationConstraint categoryConstraint = dvHelper.createFormulaListConstraint("CategoryList");
-            DataValidation categoryValidation = dvHelper.createValidation(categoryConstraint, new CellRangeAddressList(1, lastDataRow, 0, 0));
-            categoryValidation.setShowErrorBox(true);
-            sheet.addValidationData(categoryValidation);
-
-            DataValidationConstraint billerConstraint = dvHelper.createFormulaListConstraint("BillerList");
-            DataValidation billerValidation = dvHelper.createValidation(billerConstraint, new CellRangeAddressList(1, lastDataRow, 1, 1));
-            billerValidation.setShowErrorBox(true);
-            sheet.addValidationData(billerValidation);
-
-            Row example = sheet.createRow(1);
-            example.createCell(0).setCellValue(categories.isEmpty() ? "" : categories.get(0));
-            example.createCell(1).setCellValue(billers.isEmpty() ? "" : billers.get(0));
-            example.createCell(2).setCellValue("100234567");
-
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            workbook.write(out);
-            return out.toByteArray();
-        }
+    private List<String> serviceProviders(String categoryId) {
+        return bbpsLookupService.billers(categoryId).stream()
+                .map(BbpsProvider.ProviderBiller::name)
+                .filter(name -> name != null && !name.isBlank())
+                .map(String::trim)
+                .distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
     }
 
     @PostMapping(value = "/bulk", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

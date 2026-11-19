@@ -63,6 +63,16 @@ public class ClientReportsController {
         return reports.paymentHistory(clientId, range.from(), range.to());
     }
 
+    /** Bills the corporate paid from its wallet, listed under each branch with a total per branch. */
+    @GetMapping("/branch-bills")
+    public List<ReportDtos.BranchBillsRowDto> branchBills(
+            @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
+        return reports.branchBills(clientId, range.from(), range.to());
+    }
+
     /** Paid amount grouped by bill service in the window. */
     @GetMapping("/spend-by-service")
     public List<ReportDtos.SpendByServiceRowDto> spendByService(

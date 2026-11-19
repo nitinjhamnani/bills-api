@@ -70,25 +70,7 @@ public class OrganisationTransactionsController {
         if (storedDescription != null && !storedDescription.isBlank()) {
             return storedDescription;
         }
-        if ("RECHARGE".equals(category)) {
-            return "Wallet recharge";
-        }
-        if ("ADJUSTMENT".equals(category)) {
-            return "Manual wallet credit";
-        }
-        if ("FEE".equals(category)) {
-            return type == PlatformTransaction.Type.CREDIT ? "Convenience fee" : "Fee refund";
-        }
-        if ("BILL_PAID".equals(category)) {
-            return "Paid the vendor";
-        }
-        if ("COMMISSION".equals(category)) {
-            return "Commission received";
-        }
-        String label = category == null || category.isBlank()
-                ? "Bill"
-                : category.charAt(0) + category.substring(1).toLowerCase().replace('_', ' ');
-        return type == PlatformTransaction.Type.CREDIT ? label + " bill payment" : label + " refund";
+        return PlatformTransactionLabels.what(category, type);
     }
 
     public record OrganisationTransaction(

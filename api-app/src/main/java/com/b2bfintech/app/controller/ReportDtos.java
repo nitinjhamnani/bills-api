@@ -10,7 +10,7 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
-/** DTOs and small helpers shared by the Reports controllers (client, organisation, platform). */
+/** DTOs and small helpers shared by the client reports and the monthly statement. */
 public final class ReportDtos {
 
     public static final ZoneId IST = ZoneId.of("Asia/Kolkata");
@@ -52,53 +52,52 @@ public final class ReportDtos {
             List<BillDtos.LedgerEntryDto> entries) {
     }
 
-    public record ClientPortfolioRowDto(
-            String clientId, String clientName, String clientCode, String clientType, String status,
-            Instant createdAt, BigDecimal walletBalance, long totalBillPayments, BigDecimal totalPaidAmount,
-            BigDecimal outstandingAmount, BigDecimal pendingSettlementAmount) {
-    }
-
-    public record RevenueRowDto(
-            String clientId, String clientName, String clientCode, BigDecimal amount, String description, Instant createdAt) {
-    }
-
-    public record RevenueByClientRowDto(
-            String clientId, String clientName, String clientCode, long feeCount, BigDecimal totalAmount) {
-    }
-
     public record FundingRowDto(
             String id, String clientId, String clientName, String clientCode, BigDecimal amount,
             String paymentMode, String status, String paymentReference, String requestedBy, String reviewedBy,
             Instant createdAt, Instant updatedAt) {
     }
 
-    public record AdjustmentRowDto(
-            String clientId, String clientName, String clientCode, BigDecimal amount, String description, Instant createdAt) {
-    }
-
-    public record OrganisationPortfolioRowDto(
-            String organisationId, String organisationCode, String organisationName, String status,
-            Instant createdAt, long clientCount, long staffCount, BigDecimal totalGmv) {
-    }
-
-    public record OrganisationGmvRowDto(
-            String organisationId, String organisationCode, String organisationName,
-            long billsPaid, BigDecimal totalAmount) {
-    }
-
-    public record AgingRowDto(
-            String paymentId, String billId, String clientId, String clientName, String clientCode,
-            String billerName, String customerBillAccountNumber, BigDecimal amount, String orgStatus,
-            Instant stuckSince, long daysStuck, String dueDate) {
-    }
-
-    public record ClientGmvRowDto(
-            String clientId, String clientName, String clientCode,
-            long clientPaidCount, BigDecimal clientPaidAmount,
-            long orgSettledCount, BigDecimal orgSettledAmount) {
+    /** One wallet-paid bill under a branch, with that branch's bill count and amount. */
+    public record BranchBillsRowDto(
+            String branchId, String branchName,
+            String billId, BigDecimal billAmount,
+            long branchBills, BigDecimal branchTotal) {
     }
 
     public record SpendByServiceRowDto(
             String billServiceCode, String billServiceName, long count, BigDecimal amount) {
+    }
+
+    /** Bills a corporate raised and bills that were paid to the biller in one period. */
+    public record CorporateBusinessRowDto(
+            String corpId, String corpName,
+            long billsRaised, BigDecimal raisedAmount,
+            long billsPaid, BigDecimal paidAmount) {
+    }
+
+    /** One company under a sales person, plus that person's total for the period. */
+    public record SalesBusinessRowDto(
+            String salesUserId, String salesPersonName,
+            String corpId, String corpName,
+            long billsPaid, BigDecimal paidAmount,
+            long salesBillsPaid, BigDecimal salesPaidAmount) {
+    }
+
+    /** Bills assigned to a vendor and bills that vendor paid in one period. */
+    public record VendorBusinessRowDto(
+            String vendorId, String vendorName,
+            long billsAssigned, BigDecimal assignedAmount,
+            long billsPaid, BigDecimal paidAmount) {
+    }
+
+    /** One What from the Paytrix transactions list, with money in and money out. */
+    public record TransactionCategoryRowDto(String what, BigDecimal moneyIn, BigDecimal moneyOut) {
+    }
+
+    /** A bill a vendor paid and Paytrix verified. */
+    public record VerifiedVendorPaymentRowDto(
+            String corpId, String corpName, String paidById, String paidByName,
+            String billId, BigDecimal billAmount, Instant paidOn) {
     }
 }

@@ -7,9 +7,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.UUID;
 
-/** Read-only, organisation-wide reports across every client. */
+/** Reports for Paytrix staff across the companies they serve. */
 @RestController
 @RequestMapping("/api/v1/paytrix/reports")
 @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
@@ -21,72 +20,44 @@ public class OrganisationReportsController {
         this.reports = reports;
     }
 
-    /** One row per client: onboarding info, current wallet, lifetime settled, outstanding, in-flight. */
-    @GetMapping("/client-portfolio")
-    public List<ReportDtos.ClientPortfolioRowDto> clientPortfolio() {
-        return reports.clientPortfolio();
-    }
-
-    /** Bill payment cycles in the window. Defaults to settlement statuses (excludes unpaid NA).
-     * {@code dateField} is createdAt (default), clientPaidAt, or orgPaidAt. */
-    @GetMapping("/settlement-pipeline")
-    public List<BillDtos.BillPaymentDto> settlementPipeline(
-            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) String clientId,
-            @RequestParam(required = false) String dateField,
-            @RequestParam(required = false) String orgStatus) {
-        ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
-        return reports.settlementPipeline(range.from(), range.to(), clientId, dateField, orgStatus);
-    }
-
-    /** Cycles stuck in PENDING or IN_PROCESS, oldest first by days stuck. */
-    @GetMapping("/aging")
-    public List<ReportDtos.AgingRowDto> aging() {
-        return reports.agingQueue();
-    }
-
-    /** Period GMV by client: wallet-paid vs org-settled in the same IST window. */
-    @GetMapping("/gmv-by-client")
-    public List<ReportDtos.ClientGmvRowDto> gmvByClient(
+    /** Every corporate: bills raised and bills paid to the biller in the period. */
+    @GetMapping("/corporate-business")
+    public List<ReportDtos.CorporateBusinessRowDto> corporateBusiness(
             @RequestParam(required = false) String from, @RequestParam(required = false) String to) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
-        return reports.gmvByClient(range.from(), range.to());
+        return reports.corporateBusiness(range.from(), range.to());
     }
 
-    /** Every FEE ledger entry (convenience-fee revenue) in the window. */
-    @GetMapping("/revenue")
-    public List<ReportDtos.RevenueRowDto> revenue(
-            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) String clientId) {
+    /** Every vendor: bills assigned and bills that vendor paid in the period. */
+    @GetMapping("/vendor-business")
+    public List<ReportDtos.VendorBusinessRowDto> vendorBusiness(
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
-        return reports.revenue(range.from(), range.to(), clientId);
+        return reports.vendorBusiness(range.from(), range.to());
     }
 
-    /** FEE revenue rolled up by client for the window. */
-    @GetMapping("/revenue-by-client")
-    public List<ReportDtos.RevenueByClientRowDto> revenueByClient(
-            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) String clientId) {
+    /** Every sales person, the companies assigned to them, and the bills those companies paid. */
+    @GetMapping("/sales-business")
+    public List<ReportDtos.SalesBusinessRowDto> salesBusiness(
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
-        return reports.revenueByClient(range.from(), range.to(), clientId);
+        return reports.salesBusiness(range.from(), range.to());
     }
 
-    /** Every wallet top-up request created in the window. */
-    @GetMapping("/funding")
-    public List<ReportDtos.FundingRowDto> funding(
-            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) String clientId,
-            @RequestParam(required = false) String status) {
+    /** Paytrix transactions grouped by the What column, with money in and money out. */
+    @GetMapping("/transactions")
+    @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
+    public List<ReportDtos.TransactionCategoryRowDto> transactions(
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
-        return reports.funding(range.from(), range.to(), clientId, status);
+        return reports.transactionsByWhat(range.from(), range.to());
     }
 
-    /** Organisation manual wallet credits (ADJUSTMENT) in the window. */
-    @GetMapping("/funding-adjustments")
-    public List<ReportDtos.AdjustmentRowDto> fundingAdjustments(
-            @RequestParam(required = false) String from, @RequestParam(required = false) String to,
-            @RequestParam(required = false) String clientId) {
+    /** Bills a corporate raised that a vendor paid and Paytrix verified, by the date the vendor paid. */
+    @GetMapping("/verified-vendor-payments")
+    public List<ReportDtos.VerifiedVendorPaymentRowDto> verifiedVendorPayments(
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to) {
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
-        return reports.fundingAdjustments(range.from(), range.to(), clientId);
+        return reports.verifiedVendorPayments(range.from(), range.to());
     }
 }

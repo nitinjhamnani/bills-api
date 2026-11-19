@@ -78,29 +78,63 @@ public interface BillPaymentRepository extends JpaRepository<BillPayment, UUID> 
     List<BillPayment> findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(
             @Param("corpId") String corpId, @Param("from") Instant from, @Param("to") Instant to);
 
-    @Query("select p from BillPayment p where p.corpPaymentOn between :from and :to order by p.corpPaymentOn desc")
-    List<BillPayment> findByClientPaidAtBetweenOrderByClientPaidAtDesc(@Param("from") Instant from, @Param("to") Instant to);
+    @Query("""
+            select p from BillPayment p
+            where p.corpPaymentOn >= :from and p.corpPaymentOn < :to
+            """)
+    List<BillPayment> findRaisedBetween(@Param("from") Instant from, @Param("to") Instant to);
+
+    /** Bills settled with the biller in the window: Paytrix paid, or a vendor payment Paytrix verified. */
+    @Query("""
+            select p from BillPayment p
+            where (p.billAssignedTo = :paytrix and p.billPaidOn >= :from and p.billPaidOn < :to)
+               or (p.billAssignedTo = :vendor and p.verified = true
+                   and p.verifiedOn >= :from and p.verifiedOn < :to)
+            """)
+    List<BillPayment> findSettledBetween(
+            @Param("paytrix") BillPayment.AssignedTo paytrix,
+            @Param("vendor") BillPayment.AssignedTo vendor,
+            @Param("from") Instant from,
+            @Param("to") Instant to);
+
+    @Query("""
+            select p from BillPayment p
+            where p.billAssignedTo = :vendor
+              and p.billAssignedOn >= :from and p.billAssignedOn < :to
+            """)
+    List<BillPayment> findAssignedToVendorsBetween(
+            @Param("vendor") BillPayment.AssignedTo vendor,
+            @Param("from") Instant from,
+            @Param("to") Instant to);
+
+    @Query("""
+            select p from BillPayment p
+            where p.billAssignedTo = :vendor
+              and p.billPaidOn is not null
+              and p.billPaidOn >= :from and p.billPaidOn < :to
+            """)
+    List<BillPayment> findVendorPaidBetween(
+            @Param("vendor") BillPayment.AssignedTo vendor,
+            @Param("from") Instant from,
+            @Param("to") Instant to);
+
+    /** Vendor-held bills the vendor has paid and Paytrix has verified, by the date the vendor paid. */
+    @Query("""
+            select p from BillPayment p
+            where p.billAssignedTo = :assignedTo
+              and p.verified = true
+              and p.billPaidOn is not null
+              and p.billPaidOn >= :from
+              and p.billPaidOn < :to
+            order by p.billPaidOn desc
+            """)
+    List<BillPayment> findVerifiedVendorPaidByPaidOn(
+            @Param("assignedTo") BillPayment.AssignedTo assignedTo,
+            @Param("from") Instant from,
+            @Param("to") Instant to);
 
     default List<BillPayment> findByClientIdAndCreatedAtBetweenOrderByCreatedAtDesc(String corpId, Instant from, Instant to) {
         return findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(corpId, from, to);
-    }
-
-    default List<BillPayment> findByCreatedAtBetweenOrderByCreatedAtDesc(Instant from, Instant to) {
-        return findByClientPaidAtBetweenOrderByClientPaidAtDesc(from, to);
-    }
-
-    default List<BillPayment> findByClientIdAndOrgPaidAtBetweenOrderByOrgPaidAtDesc(String corpId, Instant from, Instant to) {
-        return findByClientIdOrderByCreatedAtDesc(corpId).stream()
-                .filter(p -> within(p.getOrgPaidAt(), from, to))
-                .sorted(Comparator.comparing(BillPayment::getOrgPaidAt).reversed())
-                .toList();
-    }
-
-    default List<BillPayment> findByOrgPaidAtBetweenOrderByOrgPaidAtDesc(Instant from, Instant to) {
-        return findAllNewestFirst().stream()
-                .filter(p -> within(p.getOrgPaidAt(), from, to))
-                .sorted(Comparator.comparing(BillPayment::getOrgPaidAt).reversed())
-                .toList();
     }
 
     default List<BillPayment> findByOrgStatusInOrderByCreatedAtDesc(Collection<BillPayment.OrgStatus> statuses) {
@@ -144,40 +178,4 @@ public interface BillPaymentRepository extends JpaRepository<BillPayment, UUID> 
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    @Query("""
-            select p.corpId, count(p), coalesce(sum(p.billAmount), 0)
-            from BillPayment p where p.corpPaymentOn between :from and :to group by p.corpId
-            """)
-    List<Object[]> sumClientPaidByClient(@Param("from") Instant from, @Param("to") Instant to);
-
-    default List<Object[]> sumOrgSettledByClient(Instant from, Instant to) {
-        java.util.Map<String, Object[]> rows = new java.util.LinkedHashMap<>();
-        for (BillPayment p : findByOrgPaidAtBetweenOrderByOrgPaidAtDesc(from, to)) {
-            Object[] row = rows.computeIfAbsent(p.getCorpId(), id -> new Object[]{id, 0L, BigDecimal.ZERO});
-            row[1] = (Long) row[1] + 1;
-            row[2] = ((BigDecimal) row[2]).add(p.getBillAmount() == null ? BigDecimal.ZERO : p.getBillAmount());
-        }
-        return List.copyOf(rows.values());
-    }
-
-    /** Per corporate: payment count, paid to the biller, still with Paytrix or a vendor. */
-    default List<Object[]> aggregatePortfolioByClient() {
-        java.util.Map<String, Object[]> rows = new java.util.LinkedHashMap<>();
-        for (BillPayment p : findAllNewestFirst()) {
-            Object[] row = rows.computeIfAbsent(p.getCorpId(),
-                    id -> new Object[]{id, 0L, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO});
-            BigDecimal amount = p.getBillAmount() == null ? BigDecimal.ZERO : p.getBillAmount();
-            row[1] = (Long) row[1] + 1;
-            if (p.getOrgStatus() == BillPayment.OrgStatus.PAID) {
-                row[2] = ((BigDecimal) row[2]).add(amount);
-            } else {
-                row[4] = ((BigDecimal) row[4]).add(amount);
-            }
-        }
-        return List.copyOf(rows.values());
-    }
-
-    private static boolean within(Instant value, Instant from, Instant to) {
-        return value != null && !value.isBefore(from) && !value.isAfter(to);
-    }
 }
