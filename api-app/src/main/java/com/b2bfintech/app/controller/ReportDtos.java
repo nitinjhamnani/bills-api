@@ -91,6 +91,26 @@ public final class ReportDtos {
             long billsPaid, BigDecimal paidAmount) {
     }
 
+    /** Bills one vendor paid, grouped by category. */
+    public record VendorCategoryPaidRowDto(String category, long bills, BigDecimal amount) {
+    }
+
+    /** A bill the vendor paid that Paytrix has not paid back. */
+    public record VendorAwaitingRowDto(
+            String billId, String category, String corporateName, BigDecimal amount, Instant paidOn) {
+    }
+
+    /** Commission this vendor paid to Paytrix. */
+    public record VendorCommissionPaidRowDto(
+            String billId, String category, BigDecimal billAmount,
+            BigDecimal commissionPercent, BigDecimal commissionAmount, Instant paidOn) {
+    }
+
+    /** Commission a vendor has paid Paytrix in the period, and commission still outstanding. */
+    public record VendorCommissionRowDto(
+            String vendorId, String vendorName, BigDecimal commissionEarned, BigDecimal commissionPending) {
+    }
+
     /** One What from the Paytrix transactions list, with money in and money out. */
     public record TransactionCategoryRowDto(String what, BigDecimal moneyIn, BigDecimal moneyOut) {
     }

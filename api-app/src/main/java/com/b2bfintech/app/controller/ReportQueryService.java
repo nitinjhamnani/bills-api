@@ -1,8 +1,12 @@
 package com.b2bfintech.app.controller;
 import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
+import com.b2bfintech.billing.entity.BillPaymentLog;
+import com.b2bfintech.billing.entity.VendorPayment;
+import com.b2bfintech.billing.repository.BillPaymentLogRepository;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
+import com.b2bfintech.billing.repository.VendorPaymentRepository;
 import com.b2bfintech.organisation.entity.AppUser;
 import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.Client;
@@ -28,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -36,6 +41,8 @@ import java.util.stream.Collectors;
 public class ReportQueryService {
 
     private final BillPaymentRepository billPaymentRepository;
+    private final BillPaymentLogRepository billPaymentLogRepository;
+    private final VendorPaymentRepository vendorPaymentRepository;
     private final BillRepository billRepository;
     private final CategoryLabels categoryLabels;
     private final ClientRepository clientRepository;
@@ -50,6 +57,8 @@ public class ReportQueryService {
     public ReportQueryService(
             com.b2bfintech.billing.repository.BillFetchRepository billFetchRepository,
             BillPaymentRepository billPaymentRepository,
+            BillPaymentLogRepository billPaymentLogRepository,
+            VendorPaymentRepository vendorPaymentRepository,
             BillRepository billRepository,
             CategoryLabels categoryLabels,
             ClientRepository clientRepository,
@@ -61,6 +70,8 @@ public class ReportQueryService {
             PlatformTransactionRepository platformTransactionRepository) {
         this.billFetchRepository = billFetchRepository;
         this.billPaymentRepository = billPaymentRepository;
+        this.billPaymentLogRepository = billPaymentLogRepository;
+        this.vendorPaymentRepository = vendorPaymentRepository;
         this.billRepository = billRepository;
         this.categoryLabels = categoryLabels;
         this.clientRepository = clientRepository;
@@ -328,6 +339,126 @@ public class ReportQueryService {
         return billRepository.findAllById(ids).stream().collect(Collectors.toMap(Bill::getId, b -> b));
     }
 
+    /**
+     * Commission marked received in the window, dated by when it was marked received, plus the
+     * commission each vendor still owes.
+     */
+    public List<ReportDtos.VendorCommissionRowDto> vendorCommission(Instant from, Instant to) {
+        Map<String, CommissionAcc> rows = new LinkedHashMap<>();
+        for (Client client : clientRepository.findAll()) {
+            if (client.getClientType() != Client.ClientType.VENDOR) continue;
+            rows.put(client.getId(), new CommissionAcc(client.getClientName()));
+        }
+        List<VendorPayment> payments = vendorPaymentRepository.findByPaymentStatus(VendorPayment.PaymentStatus.PAID);
+        Map<UUID, BillPayment> bills = billPaymentRepository.findAllById(
+                payments.stream().map(VendorPayment::getBillPaymentId).collect(Collectors.toSet())).stream()
+                .collect(Collectors.toMap(BillPayment::getId, Function.identity()));
+        Set<UUID> receivedInPeriod = billPaymentLogRepository
+                .findByEventTypeAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+                        BillPaymentLog.EventType.COMMISSION_CLOSED, from, to)
+                .stream()
+                .map(BillPaymentLog::getBillPaymentId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
+        for (VendorPayment payment : payments) {
+            if (payment.getCommissionPercent() == null) continue;
+            BillPayment bill = bills.get(payment.getBillPaymentId());
+            if (bill == null || !bill.isWithVendor() || bill.getBillAssignedToId() == null) continue;
+            CommissionAcc row = rows.computeIfAbsent(
+                    bill.getBillAssignedToId(), id -> new CommissionAcc(bill.getBillAssignedToName()));
+            if (row.name == null || row.name.isBlank()) {
+                row.name = bill.getBillAssignedToName();
+            }
+            if (payment.isCommissionReceived()) {
+                if (receivedInPeriod.contains(payment.getBillPaymentId())) {
+                    row.earned = row.earned.add(payment.commissionAmount());
+                }
+            } else {
+                row.pending = row.pending.add(payment.commissionAmount());
+            }
+        }
+        return rows.entrySet().stream()
+                .sorted(Comparator.comparing(entry -> entry.getValue().name, String.CASE_INSENSITIVE_ORDER))
+                .map(entry -> new ReportDtos.VendorCommissionRowDto(
+                        entry.getKey(), entry.getValue().name, entry.getValue().earned, entry.getValue().pending))
+                .toList();
+    }
+
+    /** Bills this vendor paid in the window, grouped by category. */
+    public List<ReportDtos.VendorCategoryPaidRowDto> vendorBillsByCategory(String vendorId, Instant from, Instant to) {
+        List<BillPayment> paid = paidByVendor(vendorId, from, to);
+        Map<String, Bill> bills = loadBills(paid);
+        Map<String, SpendAcc> byCategory = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (BillPayment payment : paid) {
+            String category = categoryName(bills.get(payment.getBillId()));
+            SpendAcc acc = byCategory.computeIfAbsent(category, SpendAcc::new);
+            acc.count++;
+            acc.amount = acc.amount.add(money(payment));
+        }
+        return byCategory.values().stream()
+                .map(acc -> new ReportDtos.VendorCategoryPaidRowDto(acc.name, acc.count, acc.amount))
+                .toList();
+    }
+
+    /** Bills this vendor paid in the window that Paytrix has not paid back. */
+    public List<ReportDtos.VendorAwaitingRowDto> vendorAwaitingPlatform(String vendorId, Instant from, Instant to) {
+        List<BillPayment> paid = paidByVendor(vendorId, from, to);
+        Map<String, Bill> bills = loadBills(paid);
+        Map<UUID, VendorPayment> settlements = settlementsFor(paid);
+        List<ReportDtos.VendorAwaitingRowDto> rows = new ArrayList<>();
+        for (BillPayment payment : paid) {
+            VendorPayment settlement = settlements.get(payment.getId());
+            if (settlement != null && settlement.getPaymentStatus() == VendorPayment.PaymentStatus.PAID) continue;
+            rows.add(new ReportDtos.VendorAwaitingRowDto(
+                    payment.getBillId(), categoryName(bills.get(payment.getBillId())),
+                    payment.getCorpName(), money(payment), payment.getBillPaidOn()));
+        }
+        return rows;
+    }
+
+    /** Commission this vendor paid to Paytrix in the window, dated by when it was marked received. */
+    public List<ReportDtos.VendorCommissionPaidRowDto> vendorCommissionPaid(String vendorId, Instant from, Instant to) {
+        Map<UUID, Instant> closedAt = new java.util.HashMap<>();
+        for (BillPaymentLog log : billPaymentLogRepository.findByEventTypeAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+                BillPaymentLog.EventType.COMMISSION_CLOSED, from, to)) {
+            if (log.getBillPaymentId() == null) continue;
+            closedAt.merge(log.getBillPaymentId(), log.getCreatedAt(), (left, right) -> left.isBefore(right) ? left : right);
+        }
+        if (closedAt.isEmpty()) return List.of();
+        Map<UUID, VendorPayment> settlements = vendorPaymentRepository.findByBillPaymentIdIn(closedAt.keySet()).stream()
+                .collect(Collectors.toMap(VendorPayment::getBillPaymentId, Function.identity(), (left, right) -> left));
+        List<BillPayment> payments = billPaymentRepository.findAllById(closedAt.keySet()).stream()
+                .filter(payment -> vendorId.equals(payment.getBillAssignedToId()) && payment.isWithVendor())
+                .toList();
+        Map<String, Bill> bills = loadBills(payments);
+        List<ReportDtos.VendorCommissionPaidRowDto> rows = new ArrayList<>();
+        for (BillPayment payment : payments) {
+            VendorPayment settlement = settlements.get(payment.getId());
+            if (settlement == null || !settlement.isCommissionReceived() || settlement.getCommissionPercent() == null) continue;
+            rows.add(new ReportDtos.VendorCommissionPaidRowDto(
+                    payment.getBillId(), categoryName(bills.get(payment.getBillId())), money(payment),
+                    settlement.getCommissionPercent(), settlement.commissionAmount(), closedAt.get(payment.getId())));
+        }
+        rows.sort(Comparator.comparing(ReportDtos.VendorCommissionPaidRowDto::paidOn, Comparator.nullsLast(Comparator.reverseOrder())));
+        return rows;
+    }
+
+    private List<BillPayment> paidByVendor(String vendorId, Instant from, Instant to) {
+        return billPaymentRepository.findPaidByVendorBetween(BillPayment.AssignedTo.VENDOR, vendorId, from, to);
+    }
+
+    private Map<UUID, VendorPayment> settlementsFor(List<BillPayment> payments) {
+        if (payments.isEmpty()) return Map.of();
+        return vendorPaymentRepository.findByBillPaymentIdIn(payments.stream().map(BillPayment::getId).collect(Collectors.toSet()))
+                .stream()
+                .collect(Collectors.toMap(VendorPayment::getBillPaymentId, Function.identity(), (left, right) -> left));
+    }
+
+    private static String categoryName(Bill bill) {
+        if (bill == null || bill.getCategoryName() == null || bill.getCategoryName().isBlank()) return "Other";
+        return bill.getCategoryName();
+    }
+
     /** Groups Paytrix transactions by the What shown on the transactions list. */
     public List<ReportDtos.TransactionCategoryRowDto> transactionsByWhat(Instant from, Instant to) {
         Map<String, MoneyAcc> groups = new java.util.TreeMap<>();
@@ -377,6 +508,16 @@ public class ReportQueryService {
         BigDecimal paidAmount = BigDecimal.ZERO;
 
         BusinessAcc(String name) {
+            this.name = name == null || name.isBlank() ? "Unknown" : name;
+        }
+    }
+
+    private static final class CommissionAcc {
+        String name;
+        BigDecimal earned = BigDecimal.ZERO;
+        BigDecimal pending = BigDecimal.ZERO;
+
+        CommissionAcc(String name) {
             this.name = name == null || name.isBlank() ? "Unknown" : name;
         }
     }

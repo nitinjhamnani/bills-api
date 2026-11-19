@@ -44,6 +44,15 @@ public class OrganisationReportsController {
         return reports.salesBusiness(range.from(), range.to());
     }
 
+    /** Commission marked received in the period, and commission still outstanding, per vendor. */
+    @GetMapping("/vendor-commission")
+    @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
+    public List<ReportDtos.VendorCommissionRowDto> vendorCommission(
+            @RequestParam(required = false) String from, @RequestParam(required = false) String to) {
+        ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
+        return reports.vendorCommission(range.from(), range.to());
+    }
+
     /** Paytrix transactions grouped by the What column, with money in and money out. */
     @GetMapping("/transactions")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")

@@ -118,6 +118,20 @@ public interface BillPaymentRepository extends JpaRepository<BillPayment, UUID> 
             @Param("from") Instant from,
             @Param("to") Instant to);
 
+    @Query("""
+            select p from BillPayment p
+            where p.billAssignedTo = :vendor
+              and p.billAssignedToId = :vendorId
+              and p.billPaidOn is not null
+              and p.billPaidOn >= :from and p.billPaidOn < :to
+            order by p.billPaidOn desc
+            """)
+    List<BillPayment> findPaidByVendorBetween(
+            @Param("vendor") BillPayment.AssignedTo vendor,
+            @Param("vendorId") String vendorId,
+            @Param("from") Instant from,
+            @Param("to") Instant to);
+
     /** Vendor-held bills the vendor has paid and Paytrix has verified, by the date the vendor paid. */
     @Query("""
             select p from BillPayment p
