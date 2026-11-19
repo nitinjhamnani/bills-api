@@ -10,6 +10,10 @@ import java.util.UUID;
 public record BillPaymentRow(
         UUID id,
         UUID billFetchId,
+        String billId,
+        String operatorName,
+        String consumerId,
+        Instant billFetchedOn,
         BigDecimal billAmount,
         Instant corpPaymentOn,
         String corpId,

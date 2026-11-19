@@ -90,7 +90,26 @@ public class ClientService {
             String contactPersonName,
             String contactEmail,
             String contactPhone) {
+        return updateAccountDetails(
+                id, clientName, corporateKind, contactPersonName, contactEmail, contactPhone, null, null, null, null);
+    }
+
+    @Transactional
+    public Client updateAccountDetails(
+            String id,
+            String clientName,
+            Client.CorporateKind corporateKind,
+            String contactPersonName,
+            String contactEmail,
+            String contactPhone,
+            String registrationNumber,
+            String registeredAddress,
+            String state,
+            String location) {
         Client client = getById(id);
+        if (client.getStatus() == Client.ClientStatus.TERMINATED) {
+            throw new BadRequestException("This account is closed");
+        }
         if (clientName != null && !clientName.isBlank()) {
             client.setClientName(clientName.trim());
         }
@@ -105,6 +124,18 @@ public class ClientService {
         }
         if (contactPhone != null && !contactPhone.isBlank()) {
             client.setContactPhone(contactPhone.trim());
+        }
+        if (registrationNumber != null) {
+            client.setRegistrationNumber(blankToNull(registrationNumber));
+        }
+        if (registeredAddress != null) {
+            client.setAddress(blankToNull(registeredAddress));
+        }
+        if (state != null) {
+            client.setState(blankToNull(state));
+        }
+        if (location != null) {
+            client.setLocation(blankToNull(location));
         }
         return clientRepository.save(client);
     }

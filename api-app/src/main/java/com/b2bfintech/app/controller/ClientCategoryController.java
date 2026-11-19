@@ -41,7 +41,7 @@ public class ClientCategoryController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER')")
     public List<ClientCategoryDto> list(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         return visible(clientId);

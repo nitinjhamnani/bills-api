@@ -326,6 +326,10 @@ public class OrganisationMyPaymentsController {
     public record BillPaymentTableDto(
             String id,
             String billFetchId,
+            String billId,
+            String operatorName,
+            String consumerId,
+            java.time.Instant billFetchedOn,
             BigDecimal billAmount,
             java.time.Instant corpPaymentOn,
             String corpId,
@@ -357,6 +361,10 @@ public class OrganisationMyPaymentsController {
             return new BillPaymentTableDto(
                     row.id().toString(),
                     row.billFetchId().toString(),
+                    row.billId(),
+                    row.operatorName(),
+                    row.consumerId(),
+                    row.billFetchedOn(),
                     row.billAmount(),
                     row.corpPaymentOn(),
                     row.corpId(),

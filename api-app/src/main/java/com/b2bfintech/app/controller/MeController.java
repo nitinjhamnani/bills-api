@@ -22,7 +22,7 @@ public class MeController {
     }
 
     @GetMapping("/me")
-    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','SALES','CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','SALES')")
     public MeResponse me(@AuthenticationPrincipal AuthenticatedUser principal) {
         AppUser user = appUserRepository.findByPhoneNumber(principal.phoneNumber())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));

@@ -40,6 +40,18 @@ public class BillPayment {
     @JoinColumn(name = "bill_fetch_id", nullable = false)
     private BillFetch billFetch;
 
+    @Column(name = "bill_id", length = 10)
+    private String billId;
+
+    @Column(name = "operator_name", length = 300)
+    private String operatorName;
+
+    @Column(name = "consumer_id", length = 100)
+    private String consumerId;
+
+    @Column(name = "bill_fetched_on")
+    private Instant billFetchedOn;
+
     @Column(name = "bill_amount", nullable = false, precision = 14, scale = 2)
     private BigDecimal billAmount;
 
@@ -121,7 +133,7 @@ public class BillPayment {
     }
 
     public String getBillId() {
-        return billFetch == null ? null : billFetch.getBillId();
+        return billId != null ? billId : (billFetch == null ? null : billFetch.getBillId());
     }
 
     public String getClientId() {

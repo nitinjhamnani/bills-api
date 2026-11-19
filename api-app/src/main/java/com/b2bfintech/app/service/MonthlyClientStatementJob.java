@@ -56,7 +56,7 @@ public class MonthlyClientStatementJob {
                 ReportDtos.WalletStatementDto statement =
                         reportQueryService.walletStatement(client.getId(), rangeStart, rangeEnd);
                 for (AppUser admin : tenantUserService.listForClient(client.getId())) {
-                    if (!"CLIENT_ADMIN".equals(admin.getRole().getName())) continue;
+                    if (!admin.hasUserType(AppUser.UserType.CORP_ADMIN)) continue;
                     if (admin.getStatus() != AppUser.UserStatus.ACTIVE) continue;
                     Map<String, String> data = new LinkedHashMap<>();
                     data.put("clientId", client.getId().toString());

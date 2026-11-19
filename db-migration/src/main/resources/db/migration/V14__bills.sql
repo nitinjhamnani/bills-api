@@ -1,5 +1,6 @@
 CREATE TABLE bills (
     bill_id              varchar(10) PRIMARY KEY,
+    operator_id          varchar(80),
     operator_name        varchar(300) NOT NULL,
     source_type          varchar(16) NOT NULL,
     source_id            varchar(8) NOT NULL,
@@ -12,6 +13,9 @@ CREATE TABLE bills (
     input_param_json     jsonb NOT NULL,
     customer_mobile      varchar(10),
     latest_bill_fetch_id uuid,
+    auto_fetch_enabled   boolean NOT NULL DEFAULT true,
+    auto_pay_enabled     boolean NOT NULL DEFAULT false,
+    created_at           timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT bills_id_check CHECK (bill_id ~ '^[A-Z0-9]{10}$'),
     CONSTRAINT bills_mobile_check CHECK (customer_mobile IS NULL OR customer_mobile ~ '^[6-9][0-9]{9}$')
 );
@@ -19,3 +23,5 @@ CREATE TABLE bills (
 CREATE INDEX bills_source_idx ON bills (source_type, source_id);
 CREATE INDEX bills_branch_idx ON bills (branch_id);
 CREATE INDEX bills_account_idx ON bills (source_type, source_id, operator_name, primary_param_value);
+CREATE UNIQUE INDEX bills_corp_primary_param_uidx
+    ON bills (source_id, lower(btrim(primary_param_value)));

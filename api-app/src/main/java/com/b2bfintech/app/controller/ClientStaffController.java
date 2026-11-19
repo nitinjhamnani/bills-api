@@ -12,9 +12,12 @@ import com.b2bfintech.common.security.ClientScopeGuard;
 import com.b2bfintech.organisation.entity.AppUser;
 import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.organisation.entity.UserTypes;
 import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.organisation.service.TenantUserService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -30,16 +33,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 
-/** Client Admin manages staff for their own client. */
+/** Corporate Admin or Vendor Admin manages staff strictly within their own organisation. */
 @RestController
 @RequestMapping("/api/v1/clients/{clientId}/users")
-@PreAuthorize("hasRole('CLIENT_ADMIN')")
+@PreAuthorize("hasAnyRole('CORP_ADMIN','VENDOR_ADMIN')")
 public class ClientStaffController {
-
-    private static final Set<String> ASSIGNABLE_ROLES =
-            Set.of("CLIENT_ADMIN", "CLIENT_OPERATOR", "BRANCH_USER");
 
     private final ClientService clientService;
     private final TenantUserService tenantUserService;
@@ -78,16 +77,16 @@ public class ClientStaffController {
             @Valid @RequestBody AddClientUserRequest request,
             @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCanAccess(principal, clientId);
-        if (!ASSIGNABLE_ROLES.contains(request.role())) {
-            throw new BadRequestException("role must be one of " + ASSIGNABLE_ROLES);
-        }
-        String rawPassword = (request.password() == null || request.password().isBlank()) ? null : request.password();
-        if (rawPassword != null && (rawPassword.length() < 6 || rawPassword.length() > 72)) {
-            throw new BadRequestException("Password must be 6 to 72 characters");
-        }
         Client client = clientService.getById(clientId);
+        Set<String> allowedRoles = client.getClientType() == Client.ClientType.VENDOR
+                ? UserTypes.VENDOR_ASSIGNABLE_ROLES
+                : UserTypes.CORPORATE_ASSIGNABLE_ROLES;
+        if (!allowedRoles.contains(request.role())) {
+            throw new BadRequestException("role must be one of " + allowedRoles);
+        }
+        String rawEmail = (request.email() == null || request.email().isBlank()) ? null : request.email().trim();
         AppUser user = provisioningService.createClientUser(
-                request.phoneNumber(), request.fullName(), request.role(), client, null, rawPassword);
+                request.phoneNumber(), request.fullName(), request.role(), client, rawEmail, request.password());
         List<Branch> assigned = List.of();
         if (client.getClientType() == Client.ClientType.CORPORATE
                 && request.branchId() != null
@@ -99,15 +98,27 @@ public class ClientStaffController {
     }
 
     @PutMapping("/{userId}/branches")
+    @PreAuthorize("hasRole('CORP_ADMIN')")
     public ClientUserDto updateUserBranches(
             @PathVariable String clientId,
             @PathVariable String userId,
             @RequestBody UpdateUserBranchesRequest request,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         AppUser user = requireClientUser(clientId, userId);
         List<Branch> assigned = branchService.setBranchesForUser(clientId, userId, request.resolvedBranchIds());
         return ClientUserDto.from(user, branchService.screenRole(user), assigned);
+    }
+
+    @PatchMapping("/{userId}/password")
+    public void setPassword(
+            @PathVariable String clientId,
+            @PathVariable String userId,
+            @Valid @RequestBody SetPasswordRequest request,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        ClientScopeGuard.assertCanAccess(principal, clientId);
+        requireClientUser(clientId, userId);
+        provisioningService.setUserPassword(userId, request.password());
     }
 
     @PatchMapping("/{userId}/suspend")
@@ -118,7 +129,7 @@ public class ClientStaffController {
         ClientScopeGuard.assertCanAccess(principal, clientId);
         AppUser target = requireClientUser(clientId, userId);
         if (isLastActiveAdmin(clientId, target)) {
-            throw new BadRequestException("Cannot suspend the last active Client Admin");
+            throw new BadRequestException("Cannot suspend the last active admin");
         }
         provisioningService.suspendUser(userId);
     }
@@ -142,10 +153,18 @@ public class ClientStaffController {
     }
 
     private boolean isLastActiveAdmin(String clientId, AppUser target) {
-        if (!"CLIENT_ADMIN".equals(target.getRole().getName())) return false;
+        boolean isAdmin = target.hasUserType(AppUser.UserType.CORP_ADMIN)
+                || target.hasUserType(AppUser.UserType.VENDOR_ADMIN);
+        if (!isAdmin) {
+            return false;
+        }
         return tenantUserService.listForClient(clientId).stream()
-                .filter(user -> "CLIENT_ADMIN".equals(user.getRole().getName()))
+                .filter(user -> user.hasUserType(AppUser.UserType.CORP_ADMIN)
+                        || user.hasUserType(AppUser.UserType.VENDOR_ADMIN))
                 .filter(user -> user.getStatus() == AppUser.UserStatus.ACTIVE)
                 .count() <= 1;
+    }
+
+    public record SetPasswordRequest(@NotBlank @Size(min = 6, max = 72) String password) {
     }
 }

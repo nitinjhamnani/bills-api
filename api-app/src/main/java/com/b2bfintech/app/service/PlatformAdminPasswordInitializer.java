@@ -13,8 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Creates the first Paytrix admin from configuration when none exists.
- * Phone, name, and password come from the environment, not from a migration.
+ * Creates the first Paytrix superadmin from environment configuration when none exists.
  */
 @Component
 public class PlatformAdminPasswordInitializer implements ApplicationRunner {
@@ -24,6 +23,7 @@ public class PlatformAdminPasswordInitializer implements ApplicationRunner {
     private final AppUserRepository appUserRepository;
     private final TenantUserService tenantUserService;
     private final PasswordEncoder passwordEncoder;
+    private final String email;
     private final String phone;
     private final String name;
     private final String password;
@@ -32,12 +32,14 @@ public class PlatformAdminPasswordInitializer implements ApplicationRunner {
             AppUserRepository appUserRepository,
             TenantUserService tenantUserService,
             PasswordEncoder passwordEncoder,
+            @Value("${app.auth.platform-admin-email:}") String email,
             @Value("${app.auth.platform-admin-phone:}") String phone,
             @Value("${app.auth.platform-admin-name:Paytrix Admin}") String name,
             @Value("${app.auth.platform-admin-password:}") String password) {
         this.appUserRepository = appUserRepository;
         this.tenantUserService = tenantUserService;
         this.passwordEncoder = passwordEncoder;
+        this.email = email;
         this.phone = phone;
         this.name = name;
         this.password = password;
@@ -51,15 +53,22 @@ public class PlatformAdminPasswordInitializer implements ApplicationRunner {
             return;
         }
         if (phone == null || phone.isBlank() || password == null || password.isBlank()) {
-            log.warn("No Paytrix admin exists and PLATFORM_ADMIN_PHONE / PLATFORM_ADMIN_PASSWORD are not set");
+            log.warn("No Paytrix superadmin exists and PLATFORM_ADMIN_PHONE / PLATFORM_ADMIN_PASSWORD are not set");
             return;
         }
-        if (appUserRepository.existsByPhone(phone.trim())) {
-            log.warn("Cannot create Paytrix admin; phone {} is already in use", phone.trim());
+        String trimmedPhone = phone.trim();
+        String trimmedEmail = (email == null || email.isBlank()) ? null : email.trim();
+        if (appUserRepository.existsByPhone(trimmedPhone)) {
+            log.warn("Cannot create Paytrix superadmin; phone {} is already in use", trimmedPhone);
             return;
         }
-        String displayName = name == null || name.isBlank() ? "Paytrix Admin" : name.trim();
-        tenantUserService.createSuperAdmin(phone.trim(), displayName, passwordEncoder.encode(password));
-        log.info("Created Paytrix admin {}", phone.trim());
+        if (trimmedEmail != null && appUserRepository.existsByEmail(trimmedEmail)) {
+            log.warn("Cannot create Paytrix superadmin; email {} is already in use", trimmedEmail);
+            return;
+        }
+        String displayName = (name == null || name.isBlank()) ? "Paytrix Admin" : name.trim();
+        tenantUserService.createSuperAdmin(
+                trimmedPhone, trimmedEmail, displayName, passwordEncoder.encode(password));
+        log.info("Created Paytrix superadmin (phone={}, email={})", trimmedPhone, trimmedEmail);
     }
 }

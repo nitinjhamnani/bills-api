@@ -20,7 +20,7 @@ import java.util.UUID;
 /** A client raising and viewing its own support tickets. */
 @RestController
 @RequestMapping("/api/v1/clients/{clientId}/support-tickets")
-@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
+@PreAuthorize("hasAnyRole('CORP_ADMIN','CORP_OPERATOR','BRANCH_USER','VENDOR_ADMIN','VENDOR_OPERATOR')")
 public class ClientSupportTicketController {
 
     private final SupportTicketService service;

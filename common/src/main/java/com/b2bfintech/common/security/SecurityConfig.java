@@ -1,23 +1,22 @@
 package com.b2bfintech.common.security;
 
+import com.b2bfintech.common.exception.ApiErrorResponses;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authorization.AuthorizationDecision;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import com.b2bfintech.common.exception.ApiErrorResponses;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -26,16 +25,8 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 /**
- * Stateless, JWT-only security: no sessions, no CSRF (no cookies involved), method-level
- * {@code @PreAuthorize} for RBAC. Auth (password login) and actuator health are public;
- * everything else requires a valid JWT.
- *
- * <p>CORS is explicit here rather than left to Spring's defaults: the Next.js frontend runs on a
- * different origin (localhost:3001 locally) and calls the API with a JSON body, which browsers
- * always preflight with an OPTIONS request - without a registered {@link CorsConfigurationSource},
- * Spring Security rejects that preflight with a 403 before it ever reaches a controller, which
- * surfaces in the browser as an opaque "failed to fetch"/CORS error, not a 403 anyone sees logged
- * server-side.
+ * Stateless bearer-JWT HTTP security backed by live server-side {@code auth_session} validation
+ * and explicit method-level {@code @PreAuthorize} rules per controller.
  */
 @Configuration
 @EnableWebSecurity
@@ -44,7 +35,10 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(
-            HttpSecurity http, JwtService jwtService, ObjectProvider<UserCodeLookup> userCodeLookup,
+            HttpSecurity http,
+            JwtService jwtService,
+            ObjectProvider<UserCodeLookup> userCodeLookup,
+            ObjectProvider<SessionValidator> sessionValidator,
             CorsConfigurationSource corsConfigurationSource) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
@@ -57,57 +51,59 @@ public class SecurityConfig {
                                 ApiErrorResponses.write(response, HttpStatus.FORBIDDEN, "FORBIDDEN",
                                         "You do not have permission to perform this action")))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/v1/auth/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/password/login", "/api/v1/auth/refresh").permitAll()
                         .requestMatchers(HttpMethod.GET, "/", "/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers(HttpMethod.HEAD, "/").permitAll()
-                        .requestMatchers("/api/v1/paytrix/sales/**").hasRole("SALES")
-                        .requestMatchers(HttpMethod.GET, "/api/v1/paytrix/me").authenticated()
-                        .anyRequest().access((authentication, context) -> {
+                        .requestMatchers("/api/v1/paytrix/sales/**").access((authentication, context) -> {
                             Authentication current = authentication.get();
-                            if (current == null || !current.isAuthenticated()
-                                    || current instanceof AnonymousAuthenticationToken) {
+                            if (!isAuthenticated(current)) {
                                 return new AuthorizationDecision(false);
                             }
-                            boolean sales = hasRole(current, "ROLE_SALES");
-                            if (sales) {
+                            return new AuthorizationDecision(
+                                    hasAuthority(current, "PORTAL_PLATFORM") && hasAuthority(current, "ROLE_SALES"));
+                        })
+                        .requestMatchers("/api/v1/paytrix/**").access((authentication, context) -> {
+                            Authentication current = authentication.get();
+                            if (!isAuthenticated(current)) {
                                 return new AuthorizationDecision(false);
                             }
-                            if (hasRole(current, "ROLE_BRANCH_USER")) {
-                                return new AuthorizationDecision(branchUserAllowed(context));
+                            if (!hasAuthority(current, "PORTAL_PLATFORM")) {
+                                return new AuthorizationDecision(false);
+                            }
+                            if (hasAuthority(current, "ROLE_SALES")
+                                    && !("GET".equals(context.getRequest().getMethod())
+                                         && "/api/v1/paytrix/me".equals(context.getRequest().getRequestURI()))) {
+                                return new AuthorizationDecision(false);
                             }
                             return new AuthorizationDecision(true);
                         })
+                        .anyRequest().access((authentication, context) -> {
+                            Authentication current = authentication.get();
+                            if (!isAuthenticated(current)) {
+                                return new AuthorizationDecision(false);
+                            }
+                            boolean sales = hasAuthority(current, "ROLE_SALES")
+                                    && !"/api/v1/auth/session".equals(context.getRequest().getRequestURI())
+                                    && !"/api/v1/auth/logout".equals(context.getRequest().getRequestURI())
+                                    && !"/api/v1/auth/password/change".equals(context.getRequest().getRequestURI());
+                            return new AuthorizationDecision(!sales);
+                        })
                 )
-                .addFilterBefore(new JwtAuthenticationFilter(jwtService, userCodeLookup), UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(
+                        new JwtAuthenticationFilter(jwtService, userCodeLookup, sessionValidator),
+                        UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
-    private static boolean hasRole(Authentication authentication, String role) {
-        return authentication.getAuthorities().stream().anyMatch(authority -> role.equals(authority.getAuthority()));
+    private static boolean isAuthenticated(Authentication current) {
+        return current != null && current.isAuthenticated() && !(current instanceof AnonymousAuthenticationToken);
     }
 
-    /** Branch users register bills and watch cycles. They cannot pay, open a wallet, or use Paytrix. */
-    private static boolean branchUserAllowed(RequestAuthorizationContext context) {
-        String path = context.getRequest().getRequestURI();
-        String method = context.getRequest().getMethod();
-        if (path.startsWith("/api/v1/paytrix/") || path.contains("/wallet") || path.contains("/reports") || path.contains("/users")) {
-            return false;
-        }
-        if (path.contains("/my-payments/pay") || path.contains("/my-dues/pay")
-                || ("POST".equals(method) && (path.contains("/my-payments") || path.contains("/my-dues")))) {
-            return false;
-        }
-        return path.equals("/api/v1/client/account")
-                || path.startsWith("/api/v1/client/bbps")
-                || path.contains("/managed-bills")
-                || path.contains("/my-payments")
-                || path.contains("/my-dues")
-                || path.contains("/support-tickets")
-                || path.contains("/branch-home")
-                || path.contains("/branches");
+    private static boolean hasAuthority(Authentication authentication, String expected) {
+        return authentication.getAuthorities().stream()
+                .anyMatch(authority -> expected.equals(authority.getAuthority()));
     }
 
-    /** Hashes stored passwords used at login. */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();

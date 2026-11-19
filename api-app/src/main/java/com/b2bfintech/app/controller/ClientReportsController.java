@@ -16,7 +16,7 @@ import java.util.UUID;
 /** Read-only reports for a client's own bills and wallet activity. */
 @RestController
 @RequestMapping("/api/v1/clients/{clientId}/reports")
-@PreAuthorize("hasRole('CLIENT_ADMIN')")
+@PreAuthorize("hasRole('CORP_ADMIN')")
 public class ClientReportsController {
 
     private final ReportQueryService reports;
@@ -30,7 +30,7 @@ public class ClientReportsController {
     public List<BillDtos.BillPaymentDto> billStatement(
             @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.billPaymentsInRange(clientId, range.from(), range.to());
     }
@@ -39,7 +39,7 @@ public class ClientReportsController {
     @GetMapping("/outstanding-bills")
     public List<BillDtos.BillPaymentDto> outstandingBills(
             @PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         return reports.outstandingBills(clientId);
     }
 
@@ -48,7 +48,7 @@ public class ClientReportsController {
     public ReportDtos.WalletStatementDto walletStatement(
             @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.walletStatement(clientId, range.from(), range.to());
     }
@@ -58,7 +58,7 @@ public class ClientReportsController {
     public List<BillDtos.BillPaymentDto> paymentHistory(
             @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.paymentHistory(clientId, range.from(), range.to());
     }
@@ -68,7 +68,7 @@ public class ClientReportsController {
     public List<ReportDtos.BranchBillsRowDto> branchBills(
             @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.branchBills(clientId, range.from(), range.to());
     }
@@ -78,7 +78,7 @@ public class ClientReportsController {
     public List<ReportDtos.SpendByServiceRowDto> spendByService(
             @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.spendByService(clientId, range.from(), range.to());
     }
@@ -88,7 +88,7 @@ public class ClientReportsController {
     public List<ReportDtos.FundingRowDto> topUps(
             @PathVariable String clientId, @RequestParam(required = false) String from, @RequestParam(required = false) String to,
             @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         ReportDtos.DateRange range = ReportDtos.parseRange(from, to, 30);
         return reports.clientTopUps(clientId, range.from(), range.to());
     }

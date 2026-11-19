@@ -35,7 +35,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/v1/clients/{clientId}/wallet")
-@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
+@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CORP_ADMIN','CORP_OPERATOR')")
 public class WalletController {
 
     private final WalletService walletService;
@@ -59,14 +59,14 @@ public class WalletController {
 
     @GetMapping
     public BalanceDto balance(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         clientAccountGuard.requireWalletClient(clientId);
         return new BalanceDto(walletService.getBalance(clientId, WalletAccount.WalletType.WALLET));
     }
 
     @GetMapping("/ledger")
     public List<LedgerEntryDto> ledger(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         clientAccountGuard.requireWalletClient(clientId);
         WalletAccount account = walletService.ensureAccount(clientId, WalletAccount.WalletType.WALLET);
         List<LedgerEntry> newestFirst = ledgerEntryRepository.findByWalletAccountIdOrderByCreatedAtDesc(account.getId());
@@ -80,21 +80,21 @@ public class WalletController {
     }
 
     @PostMapping(value = "/topup", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
+    @PreAuthorize("hasRole('CORP_ADMIN')")
     public TopupDto topUp(@PathVariable String clientId,
                           @RequestParam(required = false) BigDecimal amount,
                           @RequestParam(required = false) WalletTransactionRequest.Mode paymentMode,
                           @RequestParam(required = false) String paymentReference,
                           @RequestParam(required = false) MultipartFile proof,
                           @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         clientAccountGuard.requireActiveCorporate(clientId);
         return TopupDto.from(walletTopupService.submit(clientId, amount, paymentMode, paymentReference, proof, principal), false);
     }
 
     @GetMapping("/topups")
     public List<TopupDto> topups(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         clientAccountGuard.requireWalletClient(clientId);
         return walletTopupService.listForClient(clientId).stream()
                 .map(r -> TopupDto.from(
@@ -108,7 +108,7 @@ public class WalletController {
     @GetMapping("/topups/{requestId}/proof")
     public ResponseEntity<InputStreamResource> proof(@PathVariable String clientId, @PathVariable UUID requestId,
                                                      @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         WalletTransactionRequest request = walletTopupService.get(requestId);
         if (!clientId.equals(request.getCorpId())) {
             throw new ResourceNotFoundException("Top-up request not found");

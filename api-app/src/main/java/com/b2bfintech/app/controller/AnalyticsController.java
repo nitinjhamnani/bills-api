@@ -70,9 +70,9 @@ public class AnalyticsController {
      * </ul>
      */
     @GetMapping("/api/v1/clients/{clientId}/analytics")
-    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CORP_ADMIN','CORP_OPERATOR')")
     public ClientAnalyticsDto clientAnalytics(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Client client = clientRepository.findById(clientId)
                 .orElseThrow(() -> new com.b2bfintech.common.exception.ResourceNotFoundException("Client not found"));
         BigDecimal wallet = client.getClientType() == Client.ClientType.VENDOR

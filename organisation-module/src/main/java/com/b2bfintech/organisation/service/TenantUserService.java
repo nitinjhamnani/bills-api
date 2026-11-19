@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
-/** Creates and reads people. A role name from the current screens is stored as a user type. */
+/** Creates and reads people across Platform, Corporates, and Vendors. */
 @Service
 public class TenantUserService {
 
@@ -35,6 +35,9 @@ public class TenantUserService {
 
     public AppUser createUser(
             String phoneNumber, String fullName, String roleName, Client client, String email, String passwordHash) {
+        if (passwordHash == null || passwordHash.isBlank()) {
+            throw new BadRequestException("Password is required");
+        }
         if (appUserRepository.findByPhoneNumber(phoneNumber).isPresent()) {
             throw new BadRequestException("A user with phone number " + phoneNumber + " already exists in this organisation");
         }
@@ -43,18 +46,26 @@ public class TenantUserService {
         user.setPhone(phoneNumber);
         user.setName(fullName);
         user.setEmail(email);
-        user.setUserType(UserTypes.fromLegacyRole(roleName, client == null ? null : client.getClientType()));
+        user.setUserType(UserTypes.fromRole(roleName, client == null ? null : client.getClientType()));
         user.setUserOrgId(UserTypes.organisationId(client));
-        user.setPassword(passwordHash == null ? "" : passwordHash);
+        user.setPassword(passwordHash);
         user.setActive(true);
         return appUserRepository.save(user);
     }
 
     /** The first Paytrix account. Later Paytrix admins are {@link AppUser.UserType#ORG_ADMIN}. */
     public AppUser createSuperAdmin(String phoneNumber, String fullName, String passwordHash) {
+        return createSuperAdmin(phoneNumber, null, fullName, passwordHash);
+    }
+
+    public AppUser createSuperAdmin(String phoneNumber, String email, String fullName, String passwordHash) {
+        if (passwordHash == null || passwordHash.isBlank()) {
+            throw new BadRequestException("Password is required");
+        }
         AppUser user = new AppUser();
         user.setUserId(generateUniqueUserId());
         user.setPhone(phoneNumber);
+        user.setEmail((email == null || email.isBlank()) ? null : email.trim());
         user.setName(fullName);
         user.setUserType(AppUser.UserType.SUPER_ADMIN);
         user.setUserOrgId(AppUser.PAYTRIX);
@@ -81,7 +92,7 @@ public class TenantUserService {
         }
         user.setName(fullName);
         user.setEmail(email);
-        user.setUserType(UserTypes.fromLegacyRole(roleName, clientType(user)));
+        user.setUserType(UserTypes.fromRole(roleName, clientType(user)));
         return appUserRepository.save(user);
     }
 
@@ -109,6 +120,9 @@ public class TenantUserService {
     }
 
     public void setPassword(String userId, String passwordHash) {
+        if (passwordHash == null || passwordHash.isBlank()) {
+            throw new BadRequestException("Password is required");
+        }
         AppUser user = getById(userId);
         user.setPassword(passwordHash);
         appUserRepository.save(user);

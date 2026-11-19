@@ -1,23 +1,26 @@
 package com.b2bfintech.app.controller;
 
-import com.b2bfintech.common.security.AuthenticatedUser;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import com.b2bfintech.app.service.BranchService;
+import com.b2bfintech.app.service.CorporateDeletionService;
 import com.b2bfintech.app.service.TenantUserProvisioningService;
 import com.b2bfintech.common.audit.AuditService;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
-import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.common.security.AuthenticatedUser;
 import com.b2bfintech.organisation.entity.AppUser;
 import com.b2bfintech.organisation.entity.Branch;
+import com.b2bfintech.organisation.entity.Client;
 import com.b2bfintech.organisation.entity.ClientOnboarding;
+import com.b2bfintech.organisation.entity.UserTypes;
 import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.organisation.service.OnboardingService;
 import com.b2bfintech.organisation.service.TenantUserService;
+import com.b2bfintech.platform.service.AuthSessionService;
 import com.b2bfintech.wallet.entity.LedgerEntry;
 import com.b2bfintech.wallet.service.WalletService;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Email;
@@ -25,9 +28,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
-import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -37,15 +40,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
-/** Organisation admin manages the lifecycle of its clients (implementation plan &sect;4.2/&sect;4.3). */
+/** Organisation admin manages the lifecycle of corporates and vendors. */
 @RestController
 @RequestMapping("/api/v1/paytrix/clients")
 public class ClientController {
-
-    private static final Set<String> ASSIGNABLE_CLIENT_ROLES =
-            Set.of("CLIENT_ADMIN", "CLIENT_OPERATOR", "BRANCH_USER");
 
     private final ClientService clientService;
     private final TenantUserProvisioningService provisioningService;
@@ -56,6 +55,8 @@ public class ClientController {
     private final AppUserRepository appUserRepository;
     private final BranchRepository branchRepository;
     private final BranchService branchService;
+    private final AuthSessionService authSessionService;
+    private final CorporateDeletionService corporateDeletionService;
 
     public ClientController(
             ClientService clientService,
@@ -66,7 +67,9 @@ public class ClientController {
             OnboardingService onboardingService,
             AppUserRepository appUserRepository,
             BranchRepository branchRepository,
-            BranchService branchService) {
+            BranchService branchService,
+            AuthSessionService authSessionService,
+            CorporateDeletionService corporateDeletionService) {
         this.clientService = clientService;
         this.provisioningService = provisioningService;
         this.tenantUserService = tenantUserService;
@@ -76,6 +79,8 @@ public class ClientController {
         this.appUserRepository = appUserRepository;
         this.branchRepository = branchRepository;
         this.branchService = branchService;
+        this.authSessionService = authSessionService;
+        this.corporateDeletionService = corporateDeletionService;
     }
 
     @PostMapping
@@ -103,7 +108,7 @@ public class ClientController {
                     throw new BadRequestException("Password must be 6 to 72 characters");
                 }
                 provisioningService.createClientUser(
-                        request.phoneNumber(), request.clientName(), "CLIENT_ADMIN", client, request.email(), request.password());
+                        request.phoneNumber(), request.clientName(), "VENDOR_ADMIN", client, request.email(), request.password());
             }
             if (request.openingBalance() != null && request.openingBalance().signum() > 0) {
                 throw new BadRequestException("A vendor does not have a wallet");
@@ -157,22 +162,37 @@ public class ClientController {
         if (status == Client.ClientStatus.ACTIVE) {
             onboardingService.assertCanActivate(id);
         }
-        return toDto(clientService.setStatus(id, status));
+        Client updated = clientService.setStatus(id, status);
+        if (status == Client.ClientStatus.SUSPENDED || status == Client.ClientStatus.TERMINATED) {
+            authSessionService.revokeAllForClient(id, "CLIENT_" + status.name());
+        }
+        return toDto(updated);
     }
 
-    /** Adds another staff member (admin or operator) to an already-onboarded client. */
+    @PostMapping("/{id}/delete")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    public void deleteCorporate(
+            @PathVariable String id,
+            @Valid @RequestBody DeleteCorporateRequest request,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        corporateDeletionService.deleteCorporateCompletely(id, request.password(), principal);
+    }
+
+    public record DeleteCorporateRequest(@NotBlank String password) {
+    }
+
     @PostMapping("/{id}/users")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
     public ClientUserDto addUser(@PathVariable String id, @Valid @RequestBody AddClientUserRequest request) {
-        if (!ASSIGNABLE_CLIENT_ROLES.contains(request.role())) {
-            throw new BadRequestException("role must be one of " + ASSIGNABLE_CLIENT_ROLES);
-        }
-        String rawPassword = (request.password() == null || request.password().isBlank()) ? null : request.password();
-        if (rawPassword != null && (rawPassword.length() < 6 || rawPassword.length() > 72)) {
-            throw new BadRequestException("Password must be 6 to 72 characters");
-        }
         Client client = clientService.getById(id);
+        Set<String> allowedRoles = client.getClientType() == Client.ClientType.VENDOR
+                ? UserTypes.VENDOR_ASSIGNABLE_ROLES
+                : UserTypes.CORPORATE_ASSIGNABLE_ROLES;
+        if (!allowedRoles.contains(request.role())) {
+            throw new BadRequestException("role must be one of " + allowedRoles);
+        }
         if (client.getStatus() != Client.ClientStatus.ACTIVE) {
             throw new BadRequestException(client.getClientType() == Client.ClientType.VENDOR
                     ? "Mark the vendor as active before creating users"
@@ -180,7 +200,7 @@ public class ClientController {
         }
         String rawEmail = (request.email() == null || request.email().isBlank()) ? null : request.email().trim();
         AppUser user = provisioningService.createClientUser(
-                request.phoneNumber(), request.fullName(), request.role(), client, rawEmail, rawPassword);
+                request.phoneNumber(), request.fullName(), request.role(), client, rawEmail, request.password());
         List<Branch> assigned = List.of();
         if (client.getClientType() == Client.ClientType.CORPORATE
                 && request.branchId() != null
@@ -220,7 +240,7 @@ public class ClientController {
     public void suspendUser(@PathVariable String id, @PathVariable String userId) {
         AppUser target = requireClientUser(id, userId);
         if (isLastActiveAdmin(id, target)) {
-            throw new BadRequestException("Cannot suspend the last active Client Admin");
+            throw new BadRequestException("Cannot suspend the last active admin");
         }
         provisioningService.suspendUser(userId);
     }
@@ -241,9 +261,14 @@ public class ClientController {
     }
 
     private boolean isLastActiveAdmin(String clientId, AppUser target) {
-        if (!"CLIENT_ADMIN".equals(target.getRole().getName())) return false;
+        boolean isAdmin = target.hasUserType(AppUser.UserType.CORP_ADMIN)
+                || target.hasUserType(AppUser.UserType.VENDOR_ADMIN);
+        if (!isAdmin) {
+            return false;
+        }
         return tenantUserService.listForClient(clientId).stream()
-                .filter(user -> "CLIENT_ADMIN".equals(user.getRole().getName()))
+                .filter(user -> user.hasUserType(AppUser.UserType.CORP_ADMIN)
+                        || user.hasUserType(AppUser.UserType.VENDOR_ADMIN))
                 .filter(user -> user.getStatus() == AppUser.UserStatus.ACTIVE)
                 .count() <= 1;
     }
@@ -253,7 +278,7 @@ public class ClientController {
             @NotBlank String fullName,
             @NotBlank String role,
             String email,
-            String password,
+            @NotBlank @Size(min = 6, max = 72) String password,
             String branchId) {
     }
 
@@ -294,7 +319,7 @@ public class ClientController {
 
         static ClientUserDto from(AppUser u, String role, List<Branch> branches) {
             return new ClientUserDto(
-                    u.getId().toString(),
+                    u.getId(),
                     u.getPhoneNumber(),
                     u.getEmail(),
                     u.getUserCode(),
@@ -305,10 +330,6 @@ public class ClientController {
         }
     }
 
-    /**
-     * The client's phone number doubles as both its contact number and its first admin's login
-     * phone. The password registers against the phone number (and email, if given).
-     */
     public record CreateClientRequest(
             @NotBlank String clientName,
             String contactPersonName,
@@ -325,7 +346,7 @@ public class ClientController {
             return;
         }
         walletService.credit(client.getId(), openingBalance, LedgerEntry.RECHARGE, userId);
-        auditService.record("WALLET_OPENING_CREDIT", "Client", client.getId().toString(),
+        auditService.record("WALLET_OPENING_CREDIT", "Client", client.getId(),
                 "credited opening balance " + openingBalance);
     }
 
@@ -349,7 +370,7 @@ public class ClientController {
             Instant createdAt, String kycStatus, String contractStatus, boolean detailsSubmitted,
             String salesUserId, String salesPersonName, long branchCount) {
         static ClientDto from(Client a, ClientOnboarding onboarding, String salesPersonName, long branchCount) {
-            return new ClientDto(a.getId().toString(), a.getClientName(), a.getClientCode(), a.getContactPhone(),
+            return new ClientDto(a.getId(), a.getClientName(), a.getClientCode(), a.getContactPhone(),
                     a.getEmail(),
                     a.getSigningAuthority(),
                     a.getClientType().name(),
@@ -364,7 +385,7 @@ public class ClientController {
 
     private ClientDto toDto(Client client) {
         long branchCount = client.getClientType() == Client.ClientType.CORPORATE
-                ? branchRepository.countBySourceId(client.getId().toString())
+                ? branchRepository.countBySourceId(client.getId())
                 : 0L;
         return toDto(client, branchCount);
     }

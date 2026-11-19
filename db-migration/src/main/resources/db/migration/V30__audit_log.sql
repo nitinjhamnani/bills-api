@@ -5,7 +5,7 @@ CREATE TABLE audit_log (
     action        varchar(255) NOT NULL,
     entity_type   varchar(255),
     entity_id     varchar(255),
-    details       varchar(255),
+    details       text,
     created_at    timestamptz NOT NULL
 );
 

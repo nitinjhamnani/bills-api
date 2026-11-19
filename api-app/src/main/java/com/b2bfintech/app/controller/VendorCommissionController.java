@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/client")
-@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
+@PreAuthorize("hasAnyRole('VENDOR_ADMIN','VENDOR_OPERATOR')")
 public class VendorCommissionController {
 
     private final VendorPaymentService vendorPaymentService;
@@ -82,7 +82,7 @@ public class VendorCommissionController {
     }
 
     @PostMapping("/assigned-bills/{id}/in-progress")
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
+    @PreAuthorize("hasRole('VENDOR_ADMIN')")
     public BillDtos.BillPaymentDto markInProgress(
             @PathVariable UUID id, @AuthenticationPrincipal AuthenticatedUser principal) {
         Client vendor = clientAccountGuard.requireActiveVendor(vendor(principal).getId());
@@ -91,7 +91,7 @@ public class VendorCommissionController {
     }
 
     @GetMapping("/assigned-bills/export")
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
+    @PreAuthorize("hasRole('VENDOR_ADMIN')")
     public ResponseEntity<byte[]> exportAssigned(
             @RequestParam List<UUID> ids, @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
         Client vendor = clientAccountGuard.requireActiveVendor(vendor(principal).getId());
@@ -105,7 +105,7 @@ public class VendorCommissionController {
     }
 
     @PostMapping(value = "/assigned-bills/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
+    @PreAuthorize("hasRole('VENDOR_ADMIN')")
     public SheetPreview previewImport(
             @RequestParam MultipartFile file, @RequestParam List<UUID> ids,
             @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
@@ -132,7 +132,7 @@ public class VendorCommissionController {
     }
 
     @PostMapping(value = "/assigned-bills/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
+    @PreAuthorize("hasRole('VENDOR_ADMIN')")
     public List<BillDtos.BulkRowResult> importAssigned(
             @RequestParam MultipartFile file, @RequestParam List<UUID> ids,
             @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
@@ -160,7 +160,7 @@ public class VendorCommissionController {
     }
 
     @PostMapping(value = "/assigned-bills/{id}/mark-paid", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
+    @PreAuthorize("hasRole('VENDOR_ADMIN')")
     public BillDtos.BillPaymentDto markPaid(
             @PathVariable UUID id,
             @RequestParam(required = false) String transactionReference,
@@ -174,7 +174,7 @@ public class VendorCommissionController {
     }
 
     @PostMapping("/assigned-bills/reject")
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
+    @PreAuthorize("hasRole('VENDOR_ADMIN')")
     public List<BillDtos.BillPaymentDto> rejectMany(
             @Valid @RequestBody RejectManyRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
         Client vendor = clientAccountGuard.requireActiveVendor(vendor(principal).getId());
@@ -186,7 +186,7 @@ public class VendorCommissionController {
     }
 
     @PostMapping("/assigned-bills/{id}/reject")
-    @PreAuthorize("hasRole('CLIENT_ADMIN')")
+    @PreAuthorize("hasRole('VENDOR_ADMIN')")
     public BillDtos.BillPaymentDto reject(
             @PathVariable UUID id, @Valid @RequestBody RejectRequest request,
             @AuthenticationPrincipal AuthenticatedUser principal) {
@@ -214,9 +214,10 @@ public class VendorCommissionController {
     }
 
     private Client vendor(AuthenticatedUser principal) {
-        if (principal.clientId() == null || principal.clientId().isBlank()) {
+        if (principal == null || principal.clientId() == null || principal.clientId().isBlank()) {
             throw new BadRequestException("This action is only available to a vendor");
         }
+        com.b2bfintech.common.security.ClientScopeGuard.assertVendorAccess(principal, principal.clientId());
         Client client = clientService.getById(principal.clientId());
         if (client.getClientType() != Client.ClientType.VENDOR) {
             throw new BadRequestException("Only a vendor can do this");

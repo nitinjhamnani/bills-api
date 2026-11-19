@@ -24,7 +24,7 @@ public class BillerController {
     }
 
     @GetMapping("/api/v1/billers")
-    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CORP_ADMIN','CORP_OPERATOR','BRANCH_USER')")
     public List<BillerDto> list(@RequestParam(required = false) String category) {
         List<Biller> billers = (category == null || category.isBlank())
                 ? billerRepository.findAllActive()

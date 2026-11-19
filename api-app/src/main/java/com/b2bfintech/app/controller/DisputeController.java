@@ -43,20 +43,25 @@ public class DisputeController {
     }
 
     @PostMapping("/api/v1/bill-payments/{billPaymentId}/disputes")
-    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','CORP_ADMIN','CORP_OPERATOR')")
     @ResponseStatus(HttpStatus.CREATED)
     public DisputeDto raise(@PathVariable UUID billPaymentId, @RequestBody RaiseRequest request,
                              @AuthenticationPrincipal AuthenticatedUser principal) {
+        if (principal.isClientUser()) {
+            BillPayment payment = billPaymentRepository.findById(billPaymentId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
+            ClientScopeGuard.assertCorporateAccess(principal, payment.getClientId());
+        }
         return toDto(disputeService.raise(billPaymentId, request.reason(), principal.phoneNumber(), principal.clientId()));
     }
 
     @GetMapping("/api/v1/bill-payments/{billPaymentId}/disputes")
-    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CORP_ADMIN','CORP_OPERATOR')")
     public List<DisputeDto> listForBillPayment(@PathVariable UUID billPaymentId,
                                                @AuthenticationPrincipal AuthenticatedUser principal) {
         BillPayment payment = billPaymentRepository.findById(billPaymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
-        ClientScopeGuard.assertCanAccess(principal, payment.getClientId());
+        ClientScopeGuard.assertCorporateAccess(principal, payment.getClientId());
         return disputeService.listForBillPayment(billPaymentId).stream().map(this::toDto).toList();
     }
 

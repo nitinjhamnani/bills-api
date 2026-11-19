@@ -27,6 +27,10 @@ public interface BillPaymentRepository extends JpaRepository<BillPayment, UUID> 
             select new com.b2bfintech.billing.repository.BillPaymentRow(
                 p.id,
                 p.billFetch.billFetchId,
+                p.billId,
+                p.operatorName,
+                p.consumerId,
+                p.billFetchedOn,
                 p.billAmount,
                 p.corpPaymentOn,
                 p.corpId,

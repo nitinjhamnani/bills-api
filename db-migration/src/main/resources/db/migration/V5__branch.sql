@@ -7,6 +7,7 @@ CREATE TABLE branch (
     branch_location    varchar(150),
     branch_source_type varchar(16) NOT NULL,
     branch_source_id   varchar(64) NOT NULL,
+    is_active          boolean NOT NULL DEFAULT true,
     CONSTRAINT branch_id_check CHECK (branch_id ~ '^[A-Z0-9]{8}$'),
     CONSTRAINT branch_name_check CHECK (char_length(btrim(branch_name)) > 0)
 );

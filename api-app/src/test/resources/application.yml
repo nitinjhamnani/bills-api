@@ -1,0 +1,7 @@
+app:
+  jwt:
+    secret: test-only-paytrix-jwt-signing-secret-with-more-than-32-bytes-2026
+    access-token-ttl-minutes: 15
+  auth:
+    idle-timeout-minutes: 30
+    absolute-timeout-hours: 12

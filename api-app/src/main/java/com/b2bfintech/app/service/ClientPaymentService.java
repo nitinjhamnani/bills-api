@@ -90,6 +90,10 @@ public class ClientPaymentService {
         Instant now = Instant.now();
         BillPayment payment = new BillPayment();
         payment.setBillFetch(fetch);
+        payment.setBillId(bill.getBillId());
+        payment.setOperatorName(bill.getOperatorName());
+        payment.setConsumerId(bill.getPrimaryParamValue());
+        payment.setBillFetchedOn(fetch.getFetchedOn());
         payment.setBillAmount(fetch.getBillAmount());
         payment.setCorpPaymentOn(now);
         payment.setCorpId(clientId);

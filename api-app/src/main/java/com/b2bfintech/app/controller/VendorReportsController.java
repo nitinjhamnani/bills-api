@@ -16,7 +16,7 @@ import java.util.List;
 /** Reports for a vendor admin about bills they paid and commission they paid to Paytrix. */
 @RestController
 @RequestMapping("/api/v1/client/reports")
-@PreAuthorize("hasRole('CLIENT_ADMIN')")
+@PreAuthorize("hasRole('VENDOR_ADMIN')")
 public class VendorReportsController {
 
     private final ReportQueryService reports;
@@ -58,6 +58,7 @@ public class VendorReportsController {
         if (principal == null || principal.clientId() == null || principal.clientId().isBlank()) {
             throw new BadRequestException("This report is only available to a vendor");
         }
+        com.b2bfintech.common.security.ClientScopeGuard.assertVendorAccess(principal, principal.clientId());
         Client client = clientService.getById(principal.clientId());
         if (client.getClientType() != Client.ClientType.VENDOR) {
             throw new BadRequestException("Only a vendor can open this report");

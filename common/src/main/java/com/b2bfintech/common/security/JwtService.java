@@ -10,16 +10,19 @@ import org.springframework.stereotype.Service;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
- * Issues and parses the JWTs used across all three modules. A token carries the identity
- * ({@code userId}, {@code phoneNumber}), the caller's {@code role}, and - for organisation/client
- * users - the {@code tenantSchema} to route the request to (null for platform admins).
+ * Issues and parses short-lived signed JWT access tokens across Platform, Corporate, and Vendor portals.
  */
 @Service
 public class JwtService {
 
+    public static final String CLAIM_SESSION_ID = "sid";
+    public static final String CLAIM_PORTAL = "portal";
+    public static final String CLAIM_USER_TYPE = "userType";
     public static final String CLAIM_PHONE = "phone";
     public static final String CLAIM_USER_CODE = "userCode";
     public static final String CLAIM_TENANT_SCHEMA = "tenantSchema";
@@ -28,48 +31,65 @@ public class JwtService {
     public static final String CLAIM_CLIENT_ID = "clientId";
     public static final String CLAIM_BRANCH_ID = "branchId";
 
+    private static final String KNOWN_DEV_PLACEHOLDER =
+            "dev-only-b2bfintech-jwt-signing-secret-change-me-before-any-shared-deploy";
+
     private final SecretKey signingKey;
     private final long accessTokenTtlMinutes;
 
+    public record TokenSubject(
+            UUID sessionId,
+            String userId,
+            String phoneNumber,
+            String userCode,
+            Portal portal,
+            String userType,
+            String role,
+            String displayName,
+            String clientId,
+            String branchId,
+            String tenantSchema
+    ) {
+    }
+
     public JwtService(
-            @Value("${app.jwt.secret}") String secret,
-            @Value("${app.jwt.access-token-ttl-minutes:60}") long accessTokenTtlMinutes) {
-        // HS256 requires a key of at least 256 bits; pad/hash isn't needed as long as the
-        // configured secret is long enough (see application.yml comment).
-        this.signingKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+            @Value("${app.jwt.secret:}") String secret,
+            @Value("${app.jwt.access-token-ttl-minutes:15}") long accessTokenTtlMinutes) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET must be configured and at least 32 bytes long");
+        }
+        byte[] keyBytes = secret.trim().getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length < 32) {
+            throw new IllegalStateException("JWT_SECRET must be at least 32 bytes (256 bits) for HS256");
+        }
+        if (KNOWN_DEV_PLACEHOLDER.equals(secret.trim())) {
+            throw new IllegalStateException("JWT_SECRET must not use the legacy repository placeholder");
+        }
+        if (accessTokenTtlMinutes <= 0) {
+            throw new IllegalStateException("app.jwt.access-token-ttl-minutes must be positive");
+        }
+        this.signingKey = Keys.hmacShaKeyFor(keyBytes);
         this.accessTokenTtlMinutes = accessTokenTtlMinutes;
     }
 
-    public String generateAccessToken(String userId, String phoneNumber, String tenantSchema, String role, String displayName) {
-        return generateAccessToken(userId, phoneNumber, tenantSchema, role, displayName, null);
-    }
-
-    public String generateAccessToken(String userId, String phoneNumber, String tenantSchema, String role, String displayName, String clientId) {
-        return generateAccessToken(userId, phoneNumber, null, tenantSchema, role, displayName, clientId);
-    }
-
-    public String generateAccessToken(
-            String userId, String phoneNumber, String userCode, String tenantSchema, String role,
-            String displayName, String clientId) {
-        return generateAccessToken(userId, phoneNumber, userCode, tenantSchema, role, displayName, clientId, null);
-    }
-
-    public String generateAccessToken(
-            String userId, String phoneNumber, String userCode, String tenantSchema, String role,
-            String displayName, String clientId, String branchId) {
+    public String generateAccessToken(TokenSubject subject) {
         Date now = new Date();
-        Date expiry = new Date(now.getTime() + accessTokenTtlMinutes * 60_000);
+        Date expiry = new Date(now.getTime() + accessTokenTtlMinutes * 60_000L);
+        Map<String, Object> claims = new HashMap<>();
+        claims.put(CLAIM_SESSION_ID, subject.sessionId().toString());
+        claims.put(CLAIM_PORTAL, subject.portal().name());
+        claims.put(CLAIM_USER_TYPE, subject.userType());
+        claims.put(CLAIM_PHONE, subject.phoneNumber());
+        claims.put(CLAIM_USER_CODE, subject.userCode() == null ? "" : subject.userCode());
+        claims.put(CLAIM_TENANT_SCHEMA, subject.tenantSchema() == null ? "" : subject.tenantSchema());
+        claims.put(CLAIM_ROLE, subject.role());
+        claims.put(CLAIM_DISPLAY_NAME, subject.displayName() == null ? "" : subject.displayName());
+        claims.put(CLAIM_CLIENT_ID, subject.clientId() == null ? "" : subject.clientId());
+        claims.put(CLAIM_BRANCH_ID, subject.branchId() == null ? "" : subject.branchId());
+
         return Jwts.builder()
-                .subject(userId)
-                .claims(Map.of(
-                        CLAIM_PHONE, phoneNumber,
-                        CLAIM_USER_CODE, userCode == null ? "" : userCode,
-                        CLAIM_TENANT_SCHEMA, tenantSchema == null ? "" : tenantSchema,
-                        CLAIM_ROLE, role,
-                        CLAIM_DISPLAY_NAME, displayName == null ? "" : displayName,
-                        CLAIM_CLIENT_ID, clientId == null ? "" : clientId,
-                        CLAIM_BRANCH_ID, branchId == null ? "" : branchId
-                ))
+                .subject(subject.userId())
+                .claims(claims)
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(signingKey)
@@ -77,7 +97,7 @@ public class JwtService {
     }
 
     public long getAccessTokenTtlSeconds() {
-        return accessTokenTtlMinutes * 60;
+        return accessTokenTtlMinutes * 60L;
     }
 
     /**

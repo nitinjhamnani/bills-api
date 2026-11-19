@@ -6,6 +6,7 @@ CREATE TABLE wallet_transactions (
     created_at           timestamptz NOT NULL,
     created_by           varchar(6),
     transaction_category varchar(40) NOT NULL,
+    description          varchar(300),
     CONSTRAINT wallet_transactions_amount_check CHECK (amount > 0)
 );
 

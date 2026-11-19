@@ -1,11 +1,15 @@
 server:
-  # DigitalOcean App Platform sets PORT. Local runs keep 8081 unless SERVER_PORT is set.
   port: ${PORT:${SERVER_PORT:8081}}
   forward-headers-strategy: framework
 
 spring:
   application:
     name: b2bfintech-api
+
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
 
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/b2bfintech}
@@ -17,7 +21,7 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: none   # Flyway owns schema; never let Hibernate touch DDL
+      ddl-auto: none
     properties:
       hibernate:
         format_sql: false
@@ -41,27 +45,20 @@ management:
 
 app:
   cors:
-    # The Next.js dev server can run on 3000 or 3001 depending on what else is using 3000 locally
-    # (see the UI's README note); add the deployed frontend's URL here once one exists.
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:3001}
   jwt:
-    # Local/dev secret only - MUST be overridden via env var before this ever runs anywhere
-    # shared. HS256 needs >= 256 bits (32 chars); this is well over that.
-    secret: ${JWT_SECRET:dev-only-b2bfintech-jwt-signing-secret-change-me-before-any-shared-deploy}
-    access-token-ttl-minutes: 60
-  otp:
-    dummy-code: ${OTP_DUMMY_CODE:123456}
+    # Must be supplied via JWT_SECRET in .env / environment (>= 32 bytes).
+    secret: ${JWT_SECRET:}
+    access-token-ttl-minutes: ${JWT_ACCESS_TOKEN_TTL_MINUTES:15}
   auth:
-    # Accepted as a password for every account in this dummy environment so seeded personas
-    # (most of which have no password_hash) can sign in.
-    demo-password: ${AUTH_DEMO_PASSWORD:Password@123}
-    # Created at startup only when no ORGANISATION_ADMIN row exists.
+    idle-timeout-minutes: ${AUTH_IDLE_TIMEOUT_MINUTES:30}
+    absolute-timeout-hours: ${AUTH_ABSOLUTE_TIMEOUT_HOURS:12}
+    # Created at startup only when no SUPER_ADMIN row exists.
+    platform-admin-email: ${PLATFORM_ADMIN_EMAIL:}
     platform-admin-phone: ${PLATFORM_ADMIN_PHONE:}
     platform-admin-name: ${PLATFORM_ADMIN_NAME:Paytrix Admin}
     platform-admin-password: ${PLATFORM_ADMIN_PASSWORD:}
   documents:
-    # DigitalOcean Spaces. Credentials come from the environment and are never given a default.
-    # Objects are stored at https://<bucket>.<region>.digitaloceanspaces.com/<prefix>/<client code>/...
     spaces-endpoint: ${SPACES_ENDPOINT:https://sgp1.digitaloceanspaces.com}
     spaces-region: ${SPACES_REGION:sgp1}
     spaces-bucket: ${SPACES_BUCKET:paytrix}
@@ -69,20 +66,17 @@ app:
     spaces-access-key: ${SPACES_ACCESS_KEY:}
     spaces-secret-key: ${SPACES_SECRET_KEY:}
   billing:
-    # dummy is the local placeholder. branchx fetches live bills.
     provider: ${BILLING_PROVIDER:dummy}
     catalog-refresh-ms: ${BILLING_CATALOG_REFRESH_MS:7200000}
     parameter-cache-ttl-ms: ${BILLING_PARAMETER_CACHE_TTL_MS:7200000}
     branchx:
       base-url: ${BRANCHX_BASE_URL:https://10x.api.branchx.in}
-      # No default. Supply BRANCHX_API_TOKEN in the environment. Never commit the token.
       api-token: ${BRANCHX_API_TOKEN:}
       connect-timeout-ms: ${BRANCHX_CONNECT_TIMEOUT_MS:5000}
       read-timeout-ms: ${BRANCHX_READ_TIMEOUT_MS:25000}
     auto-fetch:
       enabled: ${BILLING_AUTO_FETCH_ENABLED:true}
     worker:
-      # Async bill-settlement worker poll interval (ms) - see BillProcessingWorker.
       poll-interval-ms: ${BILLING_WORKER_POLL_MS:5000}
 
 logging:

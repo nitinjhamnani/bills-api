@@ -8,13 +8,14 @@ import com.b2bfintech.organisation.entity.AppUser;
 import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.BranchMembership;
 import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.organisation.entity.UserTypes;
 import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.BranchMembershipRepository;
 import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.organisation.util.BranchIdGenerator;
-import jakarta.annotation.PostConstruct;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import com.b2bfintech.platform.service.AuthSessionService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,58 +26,39 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
 @Service
 public class BranchService {
-
-    /** Temporary shared password so a branch user can sign in without the one-time code. */
-    public static final String DEFAULT_PASSWORD = "Password@123";
-
-    private static final Set<String> ASSIGNABLE_ROLES = Set.of("CLIENT_OPERATOR", "BRANCH_USER");
 
     private final BranchRepository branchRepository;
     private final BranchMembershipRepository membershipRepository;
     private final AppUserRepository appUserRepository;
     private final ClientService clientService;
     private final TenantUserProvisioningService provisioningService;
-    private final PasswordEncoder passwordEncoder;
     private final BillRepository billRepository;
+    private final AuthSessionService authSessionService;
 
+    @Autowired
     public BranchService(
             BranchRepository branchRepository,
             BranchMembershipRepository membershipRepository,
             AppUserRepository appUserRepository,
             ClientService clientService,
             TenantUserProvisioningService provisioningService,
-            PasswordEncoder passwordEncoder,
-            BillRepository billRepository) {
+            BillRepository billRepository,
+            AuthSessionService authSessionService) {
         this.branchRepository = branchRepository;
         this.membershipRepository = membershipRepository;
         this.appUserRepository = appUserRepository;
         this.clientService = clientService;
         this.provisioningService = provisioningService;
-        this.passwordEncoder = passwordEncoder;
         this.billRepository = billRepository;
-    }
-
-    /** Gives every branch user the shared password until invite-by-code is the only path again. */
-    @PostConstruct
-    public void applyDefaultPasswords() {
-        for (AppUser user : appUserRepository.findByUserType(AppUser.UserType.CORP_USER)) {
-            if (membershipRepository.findBranchIdsByUserId(user.getUserId()).isEmpty()) {
-                continue;
-            }
-            if (user.getPassword() != null && passwordEncoder.matches(DEFAULT_PASSWORD, user.getPassword())) {
-                continue;
-            }
-            provisioningService.setUserPassword(user.getUserId(), DEFAULT_PASSWORD);
-        }
+        this.authSessionService = authSessionService;
     }
 
     public List<Branch> list(String clientId) {
         requireCorporate(clientId);
-        return branchRepository.findBySourceIdOrderByNameAsc(clientId.toString());
+        return branchRepository.findBySourceIdOrderByNameAsc(clientId);
     }
 
     public Branch get(String clientId, String branchId) {
@@ -88,7 +70,6 @@ public class BranchService {
         return branch;
     }
 
-    /** One row per branch: bill count, user count, assigned users, and branch status. */
     public List<BranchOverview> overview(String clientId) {
         Map<String, Long> billCounts = new HashMap<>();
         for (BillRepository.BranchBillCount row : billRepository.countGroupedByBranch(clientId)) {
@@ -135,15 +116,15 @@ public class BranchService {
                 .toList();
     }
 
-    /** Corporate users who can be put on a branch. Pass a branch to leave out people already on it. */
+    /** Corporate non-admin users who can be assigned to a branch. */
     public List<AppUser> pool(String clientId, String excludeBranchId) {
         requireCorporate(clientId);
         Set<String> taken = excludeBranchId == null
                 ? Set.of()
                 : new HashSet<>(membershipRepository.findUserIdsByBranchId(excludeBranchId));
-        return appUserRepository.findByUserOrgId(clientId.toString()).stream()
+        return appUserRepository.findByUserOrgId(clientId).stream()
                 .filter(AppUser::isActive)
-                .filter(user -> user.getRole() != null && ASSIGNABLE_ROLES.contains(user.getRole().getName()))
+                .filter(user -> user.hasUserType(AppUser.UserType.CORP_USER))
                 .filter(user -> !taken.contains(user.getUserId()))
                 .sorted(Comparator.comparing(user -> user.getName() == null ? "" : user.getName(), String.CASE_INSENSITIVE_ORDER))
                 .toList();
@@ -156,7 +137,7 @@ public class BranchService {
     public List<Branch> branchesForUser(String clientId, String userId) {
         requireCorporate(clientId);
         Set<String> ids = new HashSet<>(membershipRepository.findBranchIdsByUserId(userId));
-        return branchRepository.findBySourceIdOrderByNameAsc(clientId.toString()).stream()
+        return branchRepository.findBySourceIdOrderByNameAsc(clientId).stream()
                 .filter(branch -> ids.contains(branch.getId()))
                 .toList();
     }
@@ -183,6 +164,7 @@ public class BranchService {
             }
         }
         List<String> currentIds = membershipRepository.findBranchIdsByUserId(userId);
+        boolean wasEmpty = currentIds.isEmpty();
         for (String currentId : currentIds) {
             if (!targetIds.contains(currentId)) {
                 membershipRepository.findByUserIdAndBranchId(userId, currentId)
@@ -193,6 +175,9 @@ public class BranchService {
             if (!currentIds.contains(targetId)) {
                 link(userId, targetId);
             }
+        }
+        if (wasEmpty != targetIds.isEmpty() && authSessionService != null) {
+            authSessionService.revokeAllForUser(userId, "BRANCH_ROLE_CHANGED");
         }
         return branchesForUser(clientId, userId);
     }
@@ -207,7 +192,7 @@ public class BranchService {
                 if (raw != null && !raw.isBlank()) {
                     String uid = raw.trim();
                     AppUser user = appUserRepository.findById(uid)
-                             .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+                            .orElseThrow(() -> new ResourceNotFoundException("User not found"));
                     if (user.organisationId() == null || !clientId.equals(user.organisationId())) {
                         throw new BadRequestException("Choose a branch user from this corporate");
                     }
@@ -219,15 +204,23 @@ public class BranchService {
             }
         }
         List<String> currentUserIds = membershipRepository.findUserIdsByBranchId(branchId);
+        Set<String> touchedUsers = new HashSet<>();
         for (String currentId : currentUserIds) {
             if (!targetUserIds.contains(currentId)) {
                 membershipRepository.findByUserIdAndBranchId(currentId, branchId)
                         .ifPresent(membershipRepository::delete);
+                touchedUsers.add(currentId);
             }
         }
         for (String targetId : targetUserIds) {
             if (!currentUserIds.contains(targetId)) {
                 link(targetId, branchId);
+                touchedUsers.add(targetId);
+            }
+        }
+        if (authSessionService != null) {
+            for (String uid : touchedUsers) {
+                authSessionService.revokeAllForUser(uid, "BRANCH_MEMBERSHIP_CHANGED");
             }
         }
         return users(branchId);
@@ -240,21 +233,17 @@ public class BranchService {
         return branchRepository.save(branch);
     }
 
-    /**
-     * The role shown on screen. A company user who belongs to a branch signs in as a branch user.
-     * Their stored type is still the shared company-user type, which would otherwise look like an operator.
-     */
     public String screenRole(AppUser user) {
-        if (user == null || user.getRole() == null) {
+        if (user == null || user.getUserType() == null) {
             return null;
         }
         if (user.hasUserType(AppUser.UserType.CORP_USER)) {
-            return "BRANCH_USER";
+            boolean hasBranch = !membershipRepository.findBranchIdsByUserId(user.getUserId()).isEmpty();
+            return UserTypes.tokenRole(user.getUserType(), hasBranch);
         }
-        return user.getRole().getName();
+        return UserTypes.defaultRole(user.getUserType());
     }
 
-    /** Branch users only see bills on branches they belong to. Everyone else sees the corporate. */
     public boolean branchUserCanSee(AuthenticatedUser principal, String billBranchId) {
         if (principal == null || !"BRANCH_USER".equals(principal.role())) {
             return true;
@@ -274,16 +263,31 @@ public class BranchService {
     @Transactional
     public Branch create(String clientId, String name, String address, String state, String location, String code,
                          String phoneNumber, String userName, List<String> userIds) {
+        return create(clientId, name, address, state, location, code, phoneNumber, userName, null, userIds);
+    }
+
+    @Transactional
+    public Branch create(String clientId, String name, String address, String state, String location, String code,
+                         String phoneNumber, String userName, String userPassword, List<String> userIds) {
         Client client = requireActiveCorporate(clientId);
         boolean nameSet = blankToNull(userName) != null;
         boolean phoneSet = phoneNumber != null && !phoneNumber.isBlank();
-        if (nameSet != phoneSet) {
-            throw new BadRequestException(phoneSet ? "Enter a user name" : "Enter a 10-digit phone number");
+        boolean passwordProvided = userPassword != null && !userPassword.isBlank();
+        if (nameSet || phoneSet || passwordProvided) {
+            if (!nameSet) {
+                throw new BadRequestException("Enter a user name");
+            }
+            if (!phoneSet) {
+                throw new BadRequestException("Enter a 10-digit phone number");
+            }
+            if (!passwordProvided) {
+                throw new BadRequestException("Enter an initial password (at least 6 characters) for the new user");
+            }
         }
         Branch branch = new Branch();
         branch.setBranchId(newBranchId());
         branch.setSourceType(Branch.SourceType.CORP);
-        branch.setSourceId(client.getId().toString());
+        branch.setSourceId(client.getId());
         branch.setName(requiredName(name));
         branch.setAddress(blankToNull(address));
         branch.setState(blankToNull(state));
@@ -298,7 +302,7 @@ public class BranchService {
             }
         }
         if (phoneSet) {
-            addUser(client, branch, phoneNumber, userName);
+            addUser(client, branch, phoneNumber, userName, userPassword);
         }
         return branch;
     }
@@ -315,10 +319,10 @@ public class BranchService {
     }
 
     @Transactional
-    public AppUser addUser(String clientId, String branchId, String phoneNumber, String userName) {
+    public AppUser addUser(String clientId, String branchId, String phoneNumber, String userName, String userPassword) {
         Client client = requireActiveCorporate(clientId);
         Branch branch = get(clientId, branchId);
-        return addUser(client, branch, phoneNumber, userName);
+        return addUser(client, branch, phoneNumber, userName, userPassword);
     }
 
     @Transactional
@@ -330,8 +334,8 @@ public class BranchService {
         if (user.organisationId() == null || !clientId.equals(user.organisationId())) {
             throw new BadRequestException("Choose a user from this corporate");
         }
-        if (user.getRole() == null || !ASSIGNABLE_ROLES.contains(user.getRole().getName())) {
-            throw new BadRequestException("Choose a user from this corporate");
+        if (!user.hasUserType(AppUser.UserType.CORP_USER)) {
+            throw new BadRequestException("Only corporate branch/operator users can be assigned to a branch");
         }
         if (!user.isActive()) {
             throw new BadRequestException("This person cannot sign in");
@@ -339,10 +343,14 @@ public class BranchService {
         if (membershipRepository.existsByUserIdAndBranchId(userId, branchId)) {
             throw new BadRequestException("This person is already on this branch");
         }
+        boolean wasEmpty = membershipRepository.findBranchIdsByUserId(userId).isEmpty();
         BranchMembership membership = new BranchMembership();
         membership.setUserId(userId);
         membership.setBranchId(branchId);
         membershipRepository.save(membership);
+        if (wasEmpty && authSessionService != null) {
+            authSessionService.revokeAllForUser(userId, "BRANCH_ROLE_CHANGED");
+        }
         return user;
     }
 
@@ -369,9 +377,12 @@ public class BranchService {
         BranchMembership membership = membershipRepository.findByUserIdAndBranchId(userId, branchId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         membershipRepository.delete(membership);
+        if (membershipRepository.findBranchIdsByUserId(userId).isEmpty() && authSessionService != null) {
+            authSessionService.revokeAllForUser(userId, "BRANCH_ROLE_CHANGED");
+        }
     }
 
-    private AppUser addUser(Client client, Branch branch, String phoneNumber, String userName) {
+    private AppUser addUser(Client client, Branch branch, String phoneNumber, String userName, String userPassword) {
         if (phoneNumber == null || !phoneNumber.matches("\\d{10}")) {
             throw new BadRequestException("Enter a 10-digit phone number");
         }
@@ -380,7 +391,7 @@ public class BranchService {
             name = branch.getName();
         }
         AppUser user = provisioningService.createClientUser(
-                phoneNumber, name, "BRANCH_USER", client, null, DEFAULT_PASSWORD);
+                phoneNumber, name, "BRANCH_USER", client, null, userPassword);
         link(user.getUserId(), branch.getId());
         return user;
     }
@@ -426,7 +437,7 @@ public class BranchService {
         if (normalized == null) {
             return null;
         }
-        branchRepository.findBySourceIdAndCode(clientId.toString(), normalized).ifPresent(existing -> {
+        branchRepository.findBySourceIdAndCode(clientId, normalized).ifPresent(existing -> {
             if (currentId == null || !currentId.equals(existing.getId())) {
                 throw new BadRequestException("Another branch already uses this code");
             }

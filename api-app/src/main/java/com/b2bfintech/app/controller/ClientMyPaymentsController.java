@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
 /** The corporate's My Dues (unpaid fetches) and My Payments (bill_payment rows). */
 @RestController
 @RequestMapping("/api/v1/clients/{clientId}")
-@PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
+@PreAuthorize("hasAnyRole('CORP_ADMIN','CORP_OPERATOR','BRANCH_USER')")
 public class ClientMyPaymentsController {
 
     private final ClientPaymentService clientPaymentService;
@@ -56,7 +56,7 @@ public class ClientMyPaymentsController {
 
     @GetMapping("/my-dues")
     public List<BillDtos.BillPaymentDto> dues(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Function<String, String> names = categoryLabels.lookup();
         Function<String, String> branches = branchNames();
         List<BillFetch> dues = billFetchRepository.findDues(clientId);
@@ -70,10 +70,10 @@ public class ClientMyPaymentsController {
     }
 
     @PostMapping("/my-dues/pay")
-    @PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('CORP_ADMIN','CORP_OPERATOR')")
     public List<BillDtos.CorpPaymentDto> pay(@PathVariable String clientId, @RequestBody PayRequest request,
                                              @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         if ("BRANCH_USER".equals(principal.role())) {
             throw new BadRequestException("A branch cannot pay bills");
         }
@@ -85,7 +85,7 @@ public class ClientMyPaymentsController {
 
     @GetMapping("/my-payments")
     public List<BillDtos.CorpPaymentDto> payments(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Function<String, String> branches = branchNames();
         return billPaymentRepository.findByClientIdOrderByCreatedAtDesc(clientId).stream()
                 .filter(payment -> visibleTo(principal, billOf(payment)))

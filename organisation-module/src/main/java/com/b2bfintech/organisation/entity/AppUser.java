@@ -79,9 +79,9 @@ public class AppUser {
         return isPaytrix() ? null : userOrgId;
     }
 
-    /** Screens and the login token still use the previous role names. */
+    /** Distinct API/screen role for this user's stored {@link UserType}. */
     public LegacyRole getRole() {
-        return userType == null ? null : new LegacyRole(UserTypes.legacyRole(userType));
+        return userType == null ? null : new LegacyRole(UserTypes.defaultRole(userType));
     }
 
     public UserStatus getStatus() {

@@ -24,7 +24,7 @@ import java.util.UUID;
 /** What a client sees while creating a bill: enabled categories, then the operators and fields for the one they pick. */
 @RestController
 @RequestMapping("/api/v1/client/bbps")
-@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
+@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','CORP_ADMIN','CORP_OPERATOR','BRANCH_USER')")
 public class ClientBbpsController {
 
     private final BbpsCategoryRepository categoryRepository;
@@ -106,7 +106,7 @@ public class ClientBbpsController {
         if (principal.clientId() == null || principal.clientId().isBlank()) {
             throw new BadRequestException("This action is only available to a client user");
         }
-        ClientScopeGuard.assertCanAccess(principal, principal.clientId());
+        ClientScopeGuard.assertCorporateAccess(principal, principal.clientId());
         return principal.clientId();
     }
 

@@ -49,7 +49,7 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/v1/clients/{clientId}/managed-bills")
-@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','CLIENT_ADMIN','CLIENT_OPERATOR','BRANCH_USER')")
+@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','CORP_ADMIN','CORP_OPERATOR','BRANCH_USER')")
 public class ManagedBillController {
 
     private final ManagedBillService managedBillService;
@@ -83,7 +83,7 @@ public class ManagedBillController {
     @ResponseStatus(HttpStatus.CREATED)
     public BillDtos.ManagedBillDto create(@PathVariable String clientId, @Valid @RequestBody CreateRequest request,
                                            @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         categoryEnablementService.assertEnabled(clientId, request.categoryId());
         List<BbpsProvider.ProviderBillerParameter> declared = bbpsLookupService.parameters(request.categoryId(), request.billerId());
         BillParameterValidator.ValidatedParameters validated = BillParameterValidator.validate(request.parameters(), declared);
@@ -103,7 +103,7 @@ public class ManagedBillController {
     @GetMapping("/bulk/template")
     public ResponseEntity<byte[]> bulkTemplate(@PathVariable String clientId,
                                                 @AuthenticationPrincipal AuthenticatedUser principal) throws IOException {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         byte[] xlsx = ManagedBillBulkTemplate.workbook(templateOptions(clientId));
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"managed-bills-upload-template.xlsx\"")
@@ -142,14 +142,14 @@ public class ManagedBillController {
     @PostMapping(value = "/bulk", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public List<BillDtos.BulkRowResult> createBulk(@PathVariable String clientId, @RequestParam MultipartFile file,
                                                     @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         throw new BadRequestException(
                 "Bulk upload cannot collect the fields each biller asks for. Create bills one at a time.");
     }
 
     @GetMapping
     public List<BillDtos.ManagedBillDto> list(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Function<String, String> names = categoryLabels.lookup();
         Function<String, String> branches = branchNames();
         return billRepository.findByClientIdOrderByCreatedAtDesc(clientId).stream()
@@ -160,7 +160,7 @@ public class ManagedBillController {
     @GetMapping("/{billId}")
     public BillDtos.ManagedBillDto get(@PathVariable String clientId, @PathVariable String billId,
                                         @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         return toDto(ownedBill(clientId, billId, principal));
     }
 
@@ -169,7 +169,7 @@ public class ManagedBillController {
     @GetMapping("/{billId}/payments")
     public List<BillDtos.BillPaymentDto> payments(@PathVariable String clientId, @PathVariable String billId,
                                                    @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Bill bill = ownedBill(clientId, billId, principal);
         Function<String, String> names = categoryLabels.lookup();
         return billPaymentRepository.findByBillIdOrderByCreatedAtDesc(billId).stream()
@@ -180,7 +180,7 @@ public class ManagedBillController {
     @GetMapping("/{billId}/activity-log")
     public List<BillDtos.ActivityLogDto> activityLog(@PathVariable String clientId, @PathVariable String billId,
                                                        @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         ownedBill(clientId, billId, principal);
         return activityLogService.listForBill(billId).stream().map(BillDtos.ActivityLogDto::from).toList();
     }
@@ -189,7 +189,7 @@ public class ManagedBillController {
     @GetMapping("/{billId}/payments/{paymentId}")
     public BillDtos.BillPaymentDto payment(@PathVariable String clientId, @PathVariable String billId, @PathVariable UUID paymentId,
                                             @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Bill bill = ownedBill(clientId, billId, principal);
         BillPayment payment = getOwnedPayment(bill, paymentId);
         return BillDtos.BillPaymentDto.from(payment, bill, categoryLabels.lookup(), false, false, null, null, null, branchNames());
@@ -199,7 +199,7 @@ public class ManagedBillController {
     @GetMapping("/{billId}/payments/{paymentId}/activity-log")
     public List<BillDtos.ActivityLogDto> paymentActivityLog(@PathVariable String clientId, @PathVariable String billId, @PathVariable UUID paymentId,
                                                              @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Bill bill = ownedBill(clientId, billId, principal);
         getOwnedPayment(bill, paymentId);
         return activityLogService.listForBillPayment(paymentId).stream().map(BillDtos.ActivityLogDto::from).toList();
@@ -217,7 +217,7 @@ public class ManagedBillController {
     @PostMapping("/{billId}/retry-fetch")
     public BillDtos.ManagedBillDto retryFetch(@PathVariable String clientId, @PathVariable String billId,
                                                @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         ownedBill(clientId, billId, principal);
         return toDto(managedBillService.retryFetch(clientId, billId));
     }
@@ -226,10 +226,10 @@ public class ManagedBillController {
     public BillDtos.ManagedBillDto configureAutomation(@PathVariable String clientId, @PathVariable String billId,
                                                          @RequestBody AutomationRequest request,
                                                          @AuthenticationPrincipal AuthenticatedUser principal) {
-        ClientScopeGuard.assertCanAccess(principal, clientId);
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Bill current = ownedBill(clientId, billId, principal);
         boolean autoPayEnabled = request.autoPayEnabled();
-        if ("CLIENT_OPERATOR".equals(principal.role()) || "BRANCH_USER".equals(principal.role())) {
+        if ("CORP_OPERATOR".equals(principal.role()) || "BRANCH_USER".equals(principal.role())) {
             if (autoPayEnabled != current.isAutoPayEnabled()) {
                 throw new AccessDeniedException("Client operators cannot change auto-pay");
             }

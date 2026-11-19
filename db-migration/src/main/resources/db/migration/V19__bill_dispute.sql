@@ -2,9 +2,9 @@ CREATE TABLE bill_dispute (
     id               uuid PRIMARY KEY,
     bill_payment_id  uuid NOT NULL,
     raised_by        varchar(255),
-    reason           varchar(255) NOT NULL,
+    reason           varchar(1000) NOT NULL,
     status           varchar(255) NOT NULL,
-    resolution_notes varchar(255),
+    resolution_notes varchar(1000),
     resolved_by      varchar(255),
     created_at       timestamptz NOT NULL,
     updated_at       timestamptz NOT NULL

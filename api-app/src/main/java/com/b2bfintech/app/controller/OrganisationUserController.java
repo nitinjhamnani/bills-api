@@ -7,6 +7,7 @@ import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.organisation.entity.AppUser;
 import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.organisation.entity.UserTypes;
 import com.b2bfintech.organisation.service.ClientService;
 import com.b2bfintech.organisation.service.TenantUserService;
 import jakarta.validation.Valid;
@@ -25,19 +26,12 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Organisation admin manages organisation-side users (Maker/Checker/Viewer/other Organisation Admins): creation
- * with an optional email + initial password (implementation plan &sect;8.1 extension), full
- * profile/permission edits, password reset, and suspend/reactivate.
+ * Organisation admin manages users across Platform, Corporates, and Vendors.
  */
 @RestController
 @RequestMapping("/api/v1/paytrix/users")
 @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
 public class OrganisationUserController {
-
-    private static final Set<String> ASSIGNABLE_ROLES =
-            Set.of("ORGANISATION_ADMIN", "MAKER", "CHECKER", "VIEWER", "SALES");
-    private static final Set<String> ASSIGNABLE_CLIENT_ROLES =
-            Set.of("CLIENT_ADMIN", "CLIENT_OPERATOR", "BRANCH_USER");
 
     private final TenantUserService tenantUserService;
     private final TenantUserProvisioningService provisioningService;
@@ -58,7 +52,7 @@ public class OrganisationUserController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public UserDto create(@Valid @RequestBody CreateUserRequest request) {
-        validateRole(request.role());
+        validatePlatformRole(request.role());
         AppUser user = provisioningService.createOrganisationUser(
                 request.phoneNumber(), request.fullName(), request.role(), request.email(), request.password());
         return UserDto.from(user);
@@ -132,27 +126,28 @@ public class OrganisationUserController {
         return toUserDetailDto(user);
     }
 
-    /** Full profile edit - name, email, and role/permissions. Phone number (the login identifier) is immutable. */
     @PutMapping("/{id}")
     public UserDetailDto update(@PathVariable String id, @Valid @RequestBody UpdateUserRequest request) {
         AppUser existing = requireManageableUser(id);
         if (existing.isPaytrix()) {
-            validateRole(request.role());
+            validatePlatformRole(request.role());
             if (existing.hasUserType(AppUser.UserType.ORG_SALES)
                     && !"SALES".equals(request.role())
                     && clientService.hasSalesAssignments(id)) {
                 throw new BadRequestException("This person is still assigned to corporates. Clear those assignments first.");
             }
         } else {
-            if (!ASSIGNABLE_CLIENT_ROLES.contains(request.role())) {
-                throw new BadRequestException("role must be one of " + ASSIGNABLE_CLIENT_ROLES);
+            boolean vendor = existing.hasUserType(AppUser.UserType.VENDOR_ADMIN)
+                    || existing.hasUserType(AppUser.UserType.VENDOR_USER);
+            Set<String> allowed = vendor ? UserTypes.VENDOR_ASSIGNABLE_ROLES : UserTypes.CORPORATE_ASSIGNABLE_ROLES;
+            if (!allowed.contains(request.role())) {
+                throw new BadRequestException("role must be one of " + allowed);
             }
         }
         AppUser user = provisioningService.updateUserProfile(id, request.fullName(), request.email(), request.role());
         return toUserDetailDto(user);
     }
 
-    /** Replaces the corporates linked to this sales person. */
     @PutMapping("/{id}/corporates")
     public UserDetailDto assignCorporates(@PathVariable String id, @RequestBody AssignCorporatesRequest request) {
         AppUser user = requireManageableUser(id);
@@ -243,9 +238,9 @@ public class OrganisationUserController {
                 List.of());
     }
 
-    private void validateRole(String role) {
-        if (!ASSIGNABLE_ROLES.contains(role)) {
-            throw new BadRequestException("role must be one of " + ASSIGNABLE_ROLES);
+    private void validatePlatformRole(String role) {
+        if (!UserTypes.PLATFORM_ASSIGNABLE_ROLES.contains(role)) {
+            throw new BadRequestException("role must be one of " + UserTypes.PLATFORM_ASSIGNABLE_ROLES);
         }
     }
 
@@ -269,7 +264,7 @@ public class OrganisationUserController {
     public record UserDto(String id, String phoneNumber, String userCode, String fullName, String email, String role, String status) {
         static UserDto from(AppUser u) {
             return new UserDto(
-                    u.getId().toString(), u.getPhoneNumber(), u.getUserCode(), u.getFullName(), u.getEmail(),
+                    u.getId(), u.getPhoneNumber(), u.getUserCode(), u.getFullName(), u.getEmail(),
                     u.getRole().getName(), u.getStatus().name());
         }
     }
@@ -277,7 +272,7 @@ public class OrganisationUserController {
     public record AssignedCorporate(String id, String clientName, String clientCode, String status) {
         static AssignedCorporate from(Client client) {
             return new AssignedCorporate(
-                    client.getId().toString(), client.getClientName(), client.getClientCode(), client.getStatus().name());
+                    client.getId(), client.getClientName(), client.getClientCode(), client.getStatus().name());
         }
     }
 

@@ -1,6 +1,10 @@
 CREATE TABLE bill_payment (
     id                           uuid PRIMARY KEY,
     bill_fetch_id                uuid NOT NULL REFERENCES bill_fetch (bill_fetch_id),
+    bill_id                      varchar(10),
+    operator_name                varchar(300),
+    consumer_id                  varchar(100),
+    bill_fetched_on              timestamptz,
     bill_amount                  numeric(14, 2) NOT NULL,
     corp_payment_on              timestamptz NOT NULL,
     corp_id                      varchar(8) NOT NULL REFERENCES corp_details (corp_id),
@@ -26,3 +30,4 @@ CREATE TABLE bill_payment (
 CREATE INDEX bill_payment_corp_idx ON bill_payment (corp_id, corp_payment_on DESC);
 CREATE INDEX bill_payment_assigned_idx ON bill_payment (bill_assigned_to, bill_assigned_to_id, bill_assigned_to_status);
 CREATE INDEX bill_payment_fetch_idx ON bill_payment (bill_fetch_id);
+CREATE INDEX bill_payment_bill_id_idx ON bill_payment (bill_id);

@@ -16,13 +16,11 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Generic document upload/review, reused for client KYC and offline wallet-topup receipts
- * (implementation plan &sect;4.1/&sect;4.3). {@code ownerType}/{@code ownerId} let callers group
- * documents without a dedicated table per use case.
+ * Generic document upload/review, reused for corporate/vendor KYC and offline wallet-topup receipts.
  */
 @RestController
 @RequestMapping("/api/v1/documents")
-@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CLIENT_ADMIN','CLIENT_OPERATOR')")
+@PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER','VIEWER','CORP_ADMIN','CORP_OPERATOR','VENDOR_ADMIN','VENDOR_OPERATOR')")
 public class DocumentController {
 
     private final DocumentService documentService;
@@ -32,7 +30,7 @@ public class DocumentController {
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('CORP_ADMIN','CORP_OPERATOR','VENDOR_ADMIN','VENDOR_OPERATOR')")
     public DocumentDto upload(
             @RequestParam String ownerType,
             @RequestParam(required = false) String ownerId,
