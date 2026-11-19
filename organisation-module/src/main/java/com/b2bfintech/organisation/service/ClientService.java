@@ -124,6 +124,44 @@ public class ClientService {
         return ids.stream().map(clientRepository::findById).flatMap(Optional::stream).toList();
     }
 
+    /**
+     * Replaces the corporates linked to this sales person. A corporate left off the list is unlinked.
+     * A corporate already linked to someone else moves to this person.
+     */
+    @Transactional
+    public void replaceSalesCorporates(String salesUserId, List<String> clientIds) {
+        AppUser user = appUserRepository.findById(salesUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        if (!user.hasUserType(AppUser.UserType.ORG_SALES) || !user.isActive() || !user.isPaytrix()) {
+            throw new BadRequestException("Choose an active sales person");
+        }
+        java.util.LinkedHashSet<String> wanted = new java.util.LinkedHashSet<>();
+        if (clientIds != null) {
+            for (String clientId : clientIds) {
+                if (clientId != null && !clientId.isBlank()) {
+                    wanted.add(clientId.trim());
+                }
+            }
+        }
+        for (String clientId : wanted) {
+            Client client = getById(clientId);
+            if (client.getClientType() != Client.ClientType.CORPORATE) {
+                throw new BadRequestException("A sales person is only assigned to a corporate");
+            }
+        }
+        for (Client current : listForSalesPerson(salesUserId)) {
+            if (current.getClientType() == Client.ClientType.CORPORATE && !wanted.contains(current.getId())) {
+                current.setSalesUserId(null);
+                clientRepository.save(current);
+            }
+        }
+        for (String clientId : wanted) {
+            Client client = getById(clientId);
+            client.setSalesUserId(salesUserId);
+            clientRepository.save(client);
+        }
+    }
+
     /** A corporate has at most one sales person. Vendors are never linked. Passing null clears the link. */
     @Transactional
     public Client assignSalesPerson(String clientId, String salesUserId) {

@@ -3,47 +3,48 @@ import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
+import com.b2bfintech.organisation.entity.AppUser;
+import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.organisation.repository.AppUserRepository;
+import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.app.service.CategoryLabels;
 import com.b2bfintech.wallet.entity.LedgerEntry;
 import com.b2bfintech.wallet.entity.WalletAccount;
 import com.b2bfintech.wallet.entity.WalletTransactionRequest;
+import com.b2bfintech.wallet.entity.PlatformTransaction;
 import com.b2bfintech.wallet.repository.LedgerEntryRepository;
+import com.b2bfintech.wallet.repository.PlatformTransactionRepository;
 import com.b2bfintech.wallet.repository.WalletAccountRepository;
 import com.b2bfintech.wallet.repository.WalletTransactionRequestRepository;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.HashMap;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Read-only report queries shared by the client, organisation, and monthly-statement job. */
+/** Read-only report queries shared by the client reports and the monthly-statement job. */
 @Service
 public class ReportQueryService {
-
-    private static final Set<BillPayment.OrgStatus> SETTLEMENT_STATUSES = EnumSet.of(
-            BillPayment.OrgStatus.PENDING, BillPayment.OrgStatus.IN_PROCESS, BillPayment.OrgStatus.PAID);
-    private static final Set<BillPayment.OrgStatus> STUCK_STATUSES = EnumSet.of(
-            BillPayment.OrgStatus.PENDING, BillPayment.OrgStatus.IN_PROCESS);
 
     private final BillPaymentRepository billPaymentRepository;
     private final BillRepository billRepository;
     private final CategoryLabels categoryLabels;
     private final ClientRepository clientRepository;
+    private final BranchRepository branchRepository;
+    private final AppUserRepository appUserRepository;
     private final WalletAccountRepository walletAccountRepository;
     private final LedgerEntryRepository ledgerEntryRepository;
     private final WalletTransactionRequestRepository walletTopupRequestRepository;
+    private final PlatformTransactionRepository platformTransactionRepository;
     private final com.b2bfintech.billing.repository.BillFetchRepository billFetchRepository;
 
     public ReportQueryService(
@@ -52,17 +53,23 @@ public class ReportQueryService {
             BillRepository billRepository,
             CategoryLabels categoryLabels,
             ClientRepository clientRepository,
+            BranchRepository branchRepository,
+            AppUserRepository appUserRepository,
             WalletAccountRepository walletAccountRepository,
             LedgerEntryRepository ledgerEntryRepository,
-            WalletTransactionRequestRepository walletTopupRequestRepository) {
+            WalletTransactionRequestRepository walletTopupRequestRepository,
+            PlatformTransactionRepository platformTransactionRepository) {
         this.billFetchRepository = billFetchRepository;
         this.billPaymentRepository = billPaymentRepository;
         this.billRepository = billRepository;
         this.categoryLabels = categoryLabels;
         this.clientRepository = clientRepository;
+        this.branchRepository = branchRepository;
+        this.appUserRepository = appUserRepository;
         this.walletAccountRepository = walletAccountRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
         this.walletTopupRequestRepository = walletTopupRequestRepository;
+        this.platformTransactionRepository = platformTransactionRepository;
     }
 
     public ReportDtos.WalletStatementDto walletStatement(String clientId, Instant from, Instant to) {
@@ -111,6 +118,46 @@ public class ReportQueryService {
                 billPaymentRepository.findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(clientId, from, to)));
     }
 
+    /**
+     * Every branch of the corporate, and each bill that branch paid from the wallet in the window.
+     * A branch with no payments still appears once. The branch total is repeated on each of its bills.
+     */
+    public List<ReportDtos.BranchBillsRowDto> branchBills(String clientId, Instant from, Instant to) {
+        Map<String, String> branchNames = new LinkedHashMap<>();
+        for (Branch branch : branchRepository.findBySourceIdOrderByNameAsc(clientId)) {
+            branchNames.put(branch.getId(), branch.getName());
+        }
+        List<BillPayment> paid = billPaymentRepository
+                .findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(clientId, from, to);
+        Map<String, Bill> bills = loadBills(paid);
+        Map<String, List<BillPayment>> byBranch = new LinkedHashMap<>();
+        for (String branchId : branchNames.keySet()) {
+            byBranch.put(branchId, new ArrayList<>());
+        }
+        for (BillPayment payment : paid) {
+            Bill bill = bills.get(payment.getBillId());
+            if (bill == null || bill.getBranchId() == null || bill.getBranchId().isBlank()) continue;
+            byBranch.computeIfAbsent(bill.getBranchId(), id -> new ArrayList<>()).add(payment);
+        }
+        List<ReportDtos.BranchBillsRowDto> rows = new ArrayList<>();
+        for (Map.Entry<String, List<BillPayment>> entry : byBranch.entrySet()) {
+            String branchId = entry.getKey();
+            String branchName = branchNames.getOrDefault(branchId, branchId);
+            List<BillPayment> items = entry.getValue();
+            BigDecimal total = items.stream().map(ReportQueryService::money).reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (items.isEmpty()) {
+                rows.add(new ReportDtos.BranchBillsRowDto(branchId, branchName, null, null, 0, BigDecimal.ZERO));
+                continue;
+            }
+            items.sort(Comparator.comparing(BillPayment::getCorpPaymentOn, Comparator.nullsLast(Comparator.reverseOrder())));
+            for (BillPayment payment : items) {
+                rows.add(new ReportDtos.BranchBillsRowDto(
+                        branchId, branchName, payment.getBillId(), money(payment), items.size(), total));
+            }
+        }
+        return rows;
+    }
+
     public List<ReportDtos.SpendByServiceRowDto> spendByService(String clientId, Instant from, Instant to) {
         List<BillPayment> paid = billPaymentRepository
                 .findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(clientId, from, to);
@@ -130,182 +177,137 @@ public class ReportQueryService {
                 .toList();
     }
 
+    /** Every corporate, with bills raised and bills paid to the biller in the window. */
+    public List<ReportDtos.CorporateBusinessRowDto> corporateBusiness(Instant from, Instant to) {
+        Map<String, BusinessAcc> rows = new LinkedHashMap<>();
+        for (Client client : clientRepository.findAll()) {
+            if (client.getClientType() != Client.ClientType.CORPORATE) continue;
+            rows.put(client.getId(), new BusinessAcc(client.getClientName()));
+        }
+        for (BillPayment payment : billPaymentRepository.findRaisedBetween(from, to)) {
+            BusinessAcc row = rows.computeIfAbsent(payment.getCorpId(), id -> new BusinessAcc(payment.getCorpName()));
+            row.count += 1;
+            row.amount = row.amount.add(money(payment));
+        }
+        for (BillPayment payment : billPaymentRepository.findSettledBetween(
+                BillPayment.AssignedTo.ORG, BillPayment.AssignedTo.VENDOR, from, to)) {
+            BusinessAcc row = rows.computeIfAbsent(payment.getCorpId(), id -> new BusinessAcc(payment.getCorpName()));
+            row.paidCount += 1;
+            row.paidAmount = row.paidAmount.add(money(payment));
+        }
+        return rows.entrySet().stream()
+                .sorted(Comparator.comparing(e -> e.getValue().name, String.CASE_INSENSITIVE_ORDER))
+                .map(e -> new ReportDtos.CorporateBusinessRowDto(
+                        e.getKey(), e.getValue().name,
+                        e.getValue().count, e.getValue().amount,
+                        e.getValue().paidCount, e.getValue().paidAmount))
+                .toList();
+    }
+
+    /** Every vendor, with bills assigned and bills that vendor paid in the window. */
+    public List<ReportDtos.VendorBusinessRowDto> vendorBusiness(Instant from, Instant to) {
+        Map<String, BusinessAcc> rows = new LinkedHashMap<>();
+        for (Client client : clientRepository.findAll()) {
+            if (client.getClientType() != Client.ClientType.VENDOR) continue;
+            rows.put(client.getId(), new BusinessAcc(client.getClientName()));
+        }
+        for (BillPayment payment : billPaymentRepository.findAssignedToVendorsBetween(
+                BillPayment.AssignedTo.VENDOR, from, to)) {
+            BusinessAcc row = rows.computeIfAbsent(
+                    payment.getBillAssignedToId(), id -> new BusinessAcc(payment.getBillAssignedToName()));
+            row.count += 1;
+            row.amount = row.amount.add(money(payment));
+        }
+        for (BillPayment payment : billPaymentRepository.findVendorPaidBetween(
+                BillPayment.AssignedTo.VENDOR, from, to)) {
+            BusinessAcc row = rows.computeIfAbsent(
+                    payment.getBillAssignedToId(), id -> new BusinessAcc(payment.getBillAssignedToName()));
+            row.paidCount += 1;
+            row.paidAmount = row.paidAmount.add(money(payment));
+        }
+        return rows.entrySet().stream()
+                .sorted(Comparator.comparing(e -> e.getValue().name, String.CASE_INSENSITIVE_ORDER))
+                .map(e -> new ReportDtos.VendorBusinessRowDto(
+                        e.getKey(), e.getValue().name,
+                        e.getValue().count, e.getValue().amount,
+                        e.getValue().paidCount, e.getValue().paidAmount))
+                .toList();
+    }
+
+    /** Every sales person, their assigned companies, and the bills those companies paid in the window. */
+    public List<ReportDtos.SalesBusinessRowDto> salesBusiness(Instant from, Instant to) {
+        Map<String, BusinessAcc> paidByCorp = new LinkedHashMap<>();
+        for (BillPayment payment : billPaymentRepository.findSettledBetween(
+                BillPayment.AssignedTo.ORG, BillPayment.AssignedTo.VENDOR, from, to)) {
+            BusinessAcc tally = paidByCorp.computeIfAbsent(payment.getCorpId(), id -> new BusinessAcc(payment.getCorpName()));
+            tally.paidCount += 1;
+            tally.paidAmount = tally.paidAmount.add(money(payment));
+        }
+        Map<String, List<Client>> corpsBySales = new LinkedHashMap<>();
+        for (Client client : clientRepository.findAll()) {
+            if (client.getClientType() != Client.ClientType.CORPORATE) continue;
+            String salesUserId = client.getSalesUserId();
+            if (salesUserId == null || salesUserId.isBlank()) continue;
+            corpsBySales.computeIfAbsent(salesUserId, id -> new ArrayList<>()).add(client);
+        }
+        List<AppUser> salesPeople = appUserRepository.findByUserType(AppUser.UserType.ORG_SALES).stream()
+                .sorted(Comparator.comparing(AppUser::getName, String.CASE_INSENSITIVE_ORDER))
+                .toList();
+        List<ReportDtos.SalesBusinessRowDto> rows = new ArrayList<>();
+        for (AppUser sales : salesPeople) {
+            List<Client> corps = new ArrayList<>(corpsBySales.getOrDefault(sales.getUserId(), List.of()));
+            corps.sort(Comparator.comparing(Client::getClientName, String.CASE_INSENSITIVE_ORDER));
+            long salesBills = 0;
+            BigDecimal salesAmount = BigDecimal.ZERO;
+            List<ReportDtos.SalesBusinessRowDto> personRows = new ArrayList<>();
+            for (Client corp : corps) {
+                BusinessAcc paid = paidByCorp.get(corp.getId());
+                long count = paid == null ? 0 : paid.paidCount;
+                BigDecimal amount = paid == null ? BigDecimal.ZERO : paid.paidAmount;
+                salesBills += count;
+                salesAmount = salesAmount.add(amount);
+                personRows.add(new ReportDtos.SalesBusinessRowDto(
+                        sales.getUserId(), sales.getName(),
+                        corp.getId(), corp.getClientName(),
+                        count, amount, 0, BigDecimal.ZERO));
+            }
+            if (personRows.isEmpty()) {
+                rows.add(new ReportDtos.SalesBusinessRowDto(
+                        sales.getUserId(), sales.getName(), null, null, 0, BigDecimal.ZERO, 0, BigDecimal.ZERO));
+                continue;
+            }
+            for (ReportDtos.SalesBusinessRowDto row : personRows) {
+                rows.add(new ReportDtos.SalesBusinessRowDto(
+                        row.salesUserId(), row.salesPersonName(),
+                        row.corpId(), row.corpName(),
+                        row.billsPaid(), row.paidAmount(),
+                        salesBills, salesAmount));
+            }
+        }
+        return rows;
+    }
+
+    /** Bills a corporate raised that a vendor paid and Paytrix verified, in the vendor-paid window. */
+    public List<ReportDtos.VerifiedVendorPaymentRowDto> verifiedVendorPayments(Instant from, Instant to) {
+        return cap(billPaymentRepository.findVerifiedVendorPaidByPaidOn(
+                BillPayment.AssignedTo.VENDOR, from, to)).stream()
+                .map(p -> new ReportDtos.VerifiedVendorPaymentRowDto(
+                        p.getCorpId(),
+                        p.getCorpName(),
+                        p.getBillAssignedToId(),
+                        p.getBillAssignedToName(),
+                        p.getBillId(),
+                        p.getBillAmount(),
+                        p.getBillPaidOn()))
+                .toList();
+    }
+
     public List<ReportDtos.FundingRowDto> clientTopUps(String clientId, Instant from, Instant to) {
         Map<String, Client> clients = clientsById();
         return cap(walletTopupRequestRepository.findByCorpIdAndCreatedDateBetweenOrderByCreatedDateDesc(clientId, from, to))
                 .stream()
                 .map(r -> toFundingRow(r, clients.get(r.getCorpId())))
                 .toList();
-    }
-
-    public List<ReportDtos.ClientPortfolioRowDto> clientPortfolio() {
-        Map<String, WalletAccount> wallets = walletAccountRepository.findByWalletType(WalletAccount.WalletType.WALLET)
-                .stream().collect(Collectors.toMap(WalletAccount::getClientId, w -> w, (a, b) -> a));
-        Map<String, Object[]> aggregates = new HashMap<>();
-        for (Object[] row : billPaymentRepository.aggregatePortfolioByClient()) {
-            aggregates.put((String) row[0], row);
-        }
-        return clientRepository.findAll().stream()
-                .map(c -> {
-                    Object[] agg = aggregates.get(c.getId());
-                    long bills = agg == null ? 0L : ((Number) agg[1]).longValue();
-                    BigDecimal settled = agg == null ? BigDecimal.ZERO : decimal(agg[2]);
-                    BigDecimal outstanding = c.getClientType() == Client.ClientType.VENDOR
-                            ? BigDecimal.ZERO
-                            : billFetchRepository.findDues(c.getId()).stream()
-                                    .map(f -> f.getBillAmount() == null ? BigDecimal.ZERO : f.getBillAmount())
-                                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-                    BigDecimal pending = agg == null ? BigDecimal.ZERO : decimal(agg[4]);
-                    WalletAccount wallet = c.getClientType() == Client.ClientType.VENDOR ? null : wallets.get(c.getId());
-                    return new ReportDtos.ClientPortfolioRowDto(
-                            c.getId().toString(), c.getClientName(), c.getClientCode(),
-                            c.getClientType().name(), c.getStatus().name(), c.getCreatedAt(),
-                            c.getClientType() == Client.ClientType.VENDOR ? null : (wallet != null ? wallet.getBalance() : BigDecimal.ZERO),
-                            bills, settled, outstanding, pending);
-                })
-                .toList();
-    }
-
-    public List<BillDtos.BillPaymentDto> settlementPipeline(
-            Instant from, Instant to, String clientId, String dateField, String orgStatus) {
-        List<BillPayment> payments = switch (normalizeDateField(dateField)) {
-            case "clientPaidAt" -> clientId != null
-                    ? billPaymentRepository.findByClientIdAndClientPaidAtBetweenOrderByClientPaidAtDesc(clientId, from, to)
-                    : billPaymentRepository.findByClientPaidAtBetweenOrderByClientPaidAtDesc(from, to);
-            case "orgPaidAt" -> clientId != null
-                    ? billPaymentRepository.findByClientIdAndOrgPaidAtBetweenOrderByOrgPaidAtDesc(clientId, from, to)
-                    : billPaymentRepository.findByOrgPaidAtBetweenOrderByOrgPaidAtDesc(from, to);
-            default -> clientId != null
-                    ? billPaymentRepository.findByClientIdAndCreatedAtBetweenOrderByCreatedAtDesc(clientId, from, to)
-                    : billPaymentRepository.findByCreatedAtBetweenOrderByCreatedAtDesc(from, to);
-        };
-        return toPaymentDtos(cap(filterOrgStatus(payments, orgStatus)));
-    }
-
-    public List<ReportDtos.AgingRowDto> agingQueue() {
-        Map<String, Client> clients = clientsById();
-        List<BillPayment> stuck = billPaymentRepository.findByOrgStatusInOrderByCreatedAtDesc(STUCK_STATUSES);
-        Map<String, Bill> bills = loadBills(stuck);
-        Instant now = Instant.now();
-        List<ReportDtos.AgingRowDto> rows = new ArrayList<>();
-        for (BillPayment payment : stuck) {
-            Bill bill = bills.get(payment.getBillId());
-            Instant stuckSince = payment.getClientPaidAt() != null ? payment.getClientPaidAt()
-                    : payment.getUpdatedAt() != null ? payment.getUpdatedAt() : payment.getCreatedAt();
-            if (stuckSince == null) stuckSince = now;
-            long days = Math.max(0, Duration.between(stuckSince, now).toDays());
-            Client client = clients.get(payment.getClientId());
-            rows.add(new ReportDtos.AgingRowDto(
-                    payment.getId().toString(),
-                    payment.getBillId().toString(),
-                    payment.getClientId().toString(),
-                    client != null ? client.getClientName() : "Unknown client",
-                    client != null ? client.getClientCode() : null,
-                    bill != null && bill.getBillerName() != null ? bill.getBillerName() : "Unknown biller",
-                    bill != null ? bill.getCustomerBillAccountNumber() : "",
-                    payment.getAmount(),
-                    payment.getOrgStatus().name(),
-                    stuckSince,
-                    days,
-                    payment.getDueDate()));
-        }
-        rows.sort((a, b) -> Long.compare(b.daysStuck(), a.daysStuck()));
-        return cap(rows);
-    }
-
-    public List<ReportDtos.ClientGmvRowDto> gmvByClient(Instant from, Instant to) {
-        Map<String, Client> clients = clientsById();
-        Map<String, long[]> paid = new HashMap<>();
-        Map<String, BigDecimal> paidAmt = new HashMap<>();
-        for (Object[] row : billPaymentRepository.sumClientPaidByClient(from, to)) {
-            String id = (String) row[0];
-            paid.put(id, new long[]{((Number) row[1]).longValue()});
-            paidAmt.put(id, decimal(row[2]));
-        }
-        Map<String, long[]> settled = new HashMap<>();
-        Map<String, BigDecimal> settledAmt = new HashMap<>();
-        for (Object[] row : billPaymentRepository.sumOrgSettledByClient(from, to)) {
-            String id = (String) row[0];
-            settled.put(id, new long[]{((Number) row[1]).longValue()});
-            settledAmt.put(id, decimal(row[2]));
-        }
-        return clients.values().stream()
-                .map(c -> new ReportDtos.ClientGmvRowDto(
-                        c.getId().toString(), c.getClientName(), c.getClientCode(),
-                        paid.getOrDefault(c.getId(), new long[]{0})[0],
-                        paidAmt.getOrDefault(c.getId(), BigDecimal.ZERO),
-                        settled.getOrDefault(c.getId(), new long[]{0})[0],
-                        settledAmt.getOrDefault(c.getId(), BigDecimal.ZERO)))
-                .filter(r -> r.clientPaidCount() > 0 || r.orgSettledCount() > 0)
-                .toList();
-    }
-
-    /** Convenience fee debits collected from corporate wallets (`FEE` category). */
-    public List<ReportDtos.RevenueRowDto> revenue(Instant from, Instant to, String clientId) {
-        Map<String, Client> clients = clientsById();
-        return cap(ledgerEntryRepository.findByCategoryAndEntryTypeAndCreatedAtBetweenOrderByCreatedAtDesc(
-                        LedgerEntry.FEE, LedgerEntry.EntryType.DEBIT, from, to)
-                .stream()
-                .filter(e -> clientId == null || clientId.equals(e.getWalletAccount().getClientId()))
-                .map(e -> {
-                    String cid = e.getWalletAccount().getClientId();
-                    Client c = clients.get(cid);
-                    return new ReportDtos.RevenueRowDto(
-                            cid,
-                            c != null ? c.getClientName() : "Unknown client",
-                            c != null ? c.getClientCode() : null,
-                            e.getAmount(),
-                            e.describe(),
-                            e.getCreatedAt());
-                })
-                .toList());
-    }
-
-    public List<ReportDtos.RevenueByClientRowDto> revenueByClient(Instant from, Instant to, String clientId) {
-        Map<String, ReportDtos.RevenueByClientRowDto> grouped = new LinkedHashMap<>();
-        for (ReportDtos.RevenueRowDto row : revenue(from, to, clientId)) {
-            ReportDtos.RevenueByClientRowDto existing = grouped.get(row.clientId());
-            if (existing == null) {
-                grouped.put(row.clientId(), new ReportDtos.RevenueByClientRowDto(
-                        row.clientId(), row.clientName(), row.clientCode(), 1, row.amount()));
-            } else {
-                grouped.put(row.clientId(), new ReportDtos.RevenueByClientRowDto(
-                        existing.clientId(), existing.clientName(), existing.clientCode(),
-                        existing.feeCount() + 1, existing.totalAmount().add(row.amount())));
-            }
-        }
-        return List.copyOf(grouped.values());
-    }
-
-    public List<ReportDtos.FundingRowDto> funding(Instant from, Instant to, String clientId, String status) {
-        Map<String, Client> clients = clientsById();
-        return cap(walletTopupRequestRepository.findByCreatedDateBetweenOrderByCreatedDateDesc(from, to)
-                .stream()
-                .filter(r -> clientId == null || clientId.equals(r.getCorpId()))
-                .filter(r -> status == null || status.isBlank() || r.getStatus().name().equalsIgnoreCase(status))
-                .map(r -> toFundingRow(r, clients.get(r.getCorpId())))
-                .toList());
-    }
-
-    /** Paytrix manual wallet credits (`ADJUSTMENT` category). */
-    public List<ReportDtos.AdjustmentRowDto> fundingAdjustments(Instant from, Instant to, String clientId) {
-        Map<String, Client> clients = clientsById();
-        return cap(ledgerEntryRepository.findByCategoryAndEntryTypeAndCreatedAtBetweenOrderByCreatedAtDesc(
-                        LedgerEntry.ADJUSTMENT, LedgerEntry.EntryType.CREDIT, from, to)
-                .stream()
-                .filter(e -> clientId == null || clientId.equals(e.getWalletAccount().getClientId()))
-                .map(e -> {
-                    String cid = e.getWalletAccount().getClientId();
-                    Client c = clients.get(cid);
-                    return new ReportDtos.AdjustmentRowDto(
-                            cid,
-                            c != null ? c.getClientName() : "Unknown client",
-                            c != null ? c.getClientCode() : null,
-                            e.getAmount(),
-                            e.describe(),
-                            e.getCreatedAt());
-                })
-                .toList());
     }
 
     private List<BillDtos.BillPaymentDto> toPaymentDtos(List<BillPayment> payments) {
@@ -326,24 +328,27 @@ public class ReportQueryService {
         return billRepository.findAllById(ids).stream().collect(Collectors.toMap(Bill::getId, b -> b));
     }
 
+    /** Groups Paytrix transactions by the What shown on the transactions list. */
+    public List<ReportDtos.TransactionCategoryRowDto> transactionsByWhat(Instant from, Instant to) {
+        Map<String, MoneyAcc> groups = new java.util.TreeMap<>();
+        for (PlatformTransaction row : platformTransactionRepository
+                .findByCreatedAtGreaterThanEqualAndCreatedAtLessThan(from, to)) {
+            MoneyAcc acc = groups.computeIfAbsent(
+                    PlatformTransactionLabels.what(row.getCategory(), row.getType()), MoneyAcc::new);
+            BigDecimal amount = row.getAmount() == null ? BigDecimal.ZERO : row.getAmount();
+            if (row.getType() == PlatformTransaction.Type.CREDIT) {
+                acc.moneyIn = acc.moneyIn.add(amount);
+            } else {
+                acc.moneyOut = acc.moneyOut.add(amount);
+            }
+        }
+        return groups.values().stream()
+                .map(acc -> new ReportDtos.TransactionCategoryRowDto(acc.what, acc.moneyIn, acc.moneyOut))
+                .toList();
+    }
+
     private Map<String, Client> clientsById() {
         return clientRepository.findAll().stream().collect(Collectors.toMap(Client::getId, c -> c));
-    }
-
-    private static List<BillPayment> filterOrgStatus(List<BillPayment> payments, String orgStatus) {
-        if (orgStatus == null || orgStatus.isBlank() || "SETTLEMENT".equalsIgnoreCase(orgStatus)) {
-            return payments.stream().filter(p -> SETTLEMENT_STATUSES.contains(p.getOrgStatus())).toList();
-        }
-        if ("ALL".equalsIgnoreCase(orgStatus)) return payments;
-        return payments.stream().filter(p -> p.getOrgStatus().name().equalsIgnoreCase(orgStatus)).toList();
-    }
-
-    private static String normalizeDateField(String dateField) {
-        if (dateField == null) return "createdAt";
-        return switch (dateField) {
-            case "clientPaidAt", "orgPaidAt", "createdAt" -> dateField;
-            default -> "createdAt";
-        };
     }
 
     private static ReportDtos.FundingRowDto toFundingRow(WalletTransactionRequest r, Client c) {
@@ -356,14 +361,34 @@ public class ReportQueryService {
                 r.getCreatedDate(), r.getLastUpdated());
     }
 
-    private static BigDecimal decimal(Object value) {
-        if (value == null) return BigDecimal.ZERO;
-        if (value instanceof BigDecimal bd) return bd;
-        return new BigDecimal(value.toString());
+    private static BigDecimal money(BillPayment payment) {
+        return payment.getBillAmount() == null ? BigDecimal.ZERO : payment.getBillAmount();
     }
 
     private static <T> List<T> cap(List<T> rows) {
         return rows.size() <= ReportDtos.MAX_ROWS ? rows : rows.subList(0, ReportDtos.MAX_ROWS);
+    }
+
+    private static final class BusinessAcc {
+        final String name;
+        long count;
+        BigDecimal amount = BigDecimal.ZERO;
+        long paidCount;
+        BigDecimal paidAmount = BigDecimal.ZERO;
+
+        BusinessAcc(String name) {
+            this.name = name == null || name.isBlank() ? "Unknown" : name;
+        }
+    }
+
+    private static final class MoneyAcc {
+        final String what;
+        BigDecimal moneyIn = BigDecimal.ZERO;
+        BigDecimal moneyOut = BigDecimal.ZERO;
+
+        MoneyAcc(String what) {
+            this.what = what;
+        }
     }
 
     private static final class SpendAcc {

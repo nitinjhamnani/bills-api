@@ -152,6 +152,17 @@ public class OrganisationUserController {
         return toUserDetailDto(user);
     }
 
+    /** Replaces the corporates linked to this sales person. */
+    @PutMapping("/{id}/corporates")
+    public UserDetailDto assignCorporates(@PathVariable String id, @RequestBody AssignCorporatesRequest request) {
+        AppUser user = requireManageableUser(id);
+        if (!user.hasUserType(AppUser.UserType.ORG_SALES)) {
+            throw new BadRequestException("Corporates are assigned to a sales person");
+        }
+        clientService.replaceSalesCorporates(id, request.clientIds() == null ? List.of() : request.clientIds());
+        return toUserDetailDto(tenantUserService.getById(id));
+    }
+
     @PatchMapping("/{id}/password")
     public void setPassword(@PathVariable String id, @Valid @RequestBody SetPasswordRequest request) {
         requireManageableUser(id);
@@ -250,6 +261,9 @@ public class OrganisationUserController {
     }
 
     public record SetPasswordRequest(@NotBlank @Size(min = 6, max = 72) String password) {
+    }
+
+    public record AssignCorporatesRequest(List<String> clientIds) {
     }
 
     public record UserDto(String id, String phoneNumber, String userCode, String fullName, String email, String role, String status) {

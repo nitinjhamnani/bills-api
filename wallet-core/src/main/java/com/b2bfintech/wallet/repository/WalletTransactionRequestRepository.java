@@ -25,7 +25,5 @@ public interface WalletTransactionRequestRepository extends JpaRepository<Wallet
 
     boolean existsByCorpIdAndUtrIgnoreCaseAndStatusNot(String corpId, String utr, WalletTransactionRequest.Status status);
 
-    List<WalletTransactionRequest> findByCreatedDateBetweenOrderByCreatedDateDesc(Instant from, Instant to);
-
     List<WalletTransactionRequest> findByCorpIdAndCreatedDateBetweenOrderByCreatedDateDesc(String corpId, Instant from, Instant to);
 }
