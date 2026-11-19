@@ -43,7 +43,7 @@ public class DisputeController {
     }
 
     @PostMapping("/api/v1/bill-payments/{billPaymentId}/disputes")
-    @PreAuthorize("hasAnyRole('CLIENT_ADMIN','CLIENT_OPERATOR')")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','CLIENT_ADMIN','CLIENT_OPERATOR')")
     @ResponseStatus(HttpStatus.CREATED)
     public DisputeDto raise(@PathVariable UUID billPaymentId, @RequestBody RaiseRequest request,
                              @AuthenticationPrincipal AuthenticatedUser principal) {

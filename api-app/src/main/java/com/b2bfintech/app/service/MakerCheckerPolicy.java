@@ -32,8 +32,8 @@ public class MakerCheckerPolicy {
     }
 
     /** Who last picked this bill up, from the activity log. */
-    private String pickedUpBy(BillPayment payment) {
-        return logRepository.findByBillPaymentIdOrderByCreatedAtDesc(payment.getId()).stream()
+    private String pickedUpBy(java.util.UUID paymentId) {
+        return logRepository.findByBillPaymentIdOrderByCreatedAtDesc(paymentId).stream()
                 .filter(entry -> entry.getEventType() == BillPaymentLog.EventType.ORG_PICKED_UP)
                 .map(BillPaymentLog::getActor)
                 .findFirst()
@@ -50,6 +50,34 @@ public class MakerCheckerPolicy {
         }
         return payment.getOrgStatus() == BillPayment.OrgStatus.IN_PROCESS
                 && requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, payment.getAmount());
+    }
+
+    public boolean awaitingChecker(com.b2bfintech.billing.repository.BillPaymentRow row) {
+        if (row.isWithVendor()) {
+            return false;
+        }
+        return row.orgStatus() == BillPayment.OrgStatus.IN_PROCESS
+                && requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, row.billAmount());
+    }
+
+    public boolean canSettleBill(AuthenticatedUser user, com.b2bfintech.billing.repository.BillPaymentRow row) {
+        if (user == null || row.isWithVendor() || row.orgStatus() != BillPayment.OrgStatus.IN_PROCESS) {
+            return false;
+        }
+        if (!MONEY_ROLES.contains(user.role())) {
+            return false;
+        }
+        if (!requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, row.billAmount())) {
+            return true;
+        }
+        if ("SUPER_ADMIN".equals(user.role()) || "ORGANISATION_ADMIN".equals(user.role())) {
+            return true;
+        }
+        if (!"CHECKER".equals(user.role())) {
+            return false;
+        }
+        String picker = pickedUpBy(row.id());
+        return !isSameActor(user, picker);
     }
 
     public boolean canSettleBill(AuthenticatedUser user, BillPayment payment) {
@@ -69,7 +97,7 @@ public class MakerCheckerPolicy {
         if (!"CHECKER".equals(user.role())) {
             return false;
         }
-        String picker = pickedUpBy(payment);
+        String picker = pickedUpBy(payment.getId());
         return !isSameActor(user, picker);
     }
 
@@ -77,7 +105,7 @@ public class MakerCheckerPolicy {
         if (canSettleBill(user, payment)) {
             return;
         }
-        if (isSameActor(user, pickedUpBy(payment))
+        if (isSameActor(user, pickedUpBy(payment.getId()))
                 && requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, payment.getAmount())) {
             throw new AccessDeniedException("The person who picked up this bill cannot also settle it");
         }

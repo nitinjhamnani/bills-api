@@ -87,10 +87,13 @@ public class OrganisationMyPaymentsController {
     }
 
     @GetMapping
-    public List<BillDtos.BillPaymentDto> list(@AuthenticationPrincipal AuthenticatedUser principal) {
-        Function<String, String> names = categoryLabels.lookup();
-        return billPaymentRepository.findAllNewestFirst().stream()
-                .map(p -> toDto(p, names, principal)).toList();
+    public List<BillPaymentTableDto> list(@AuthenticationPrincipal AuthenticatedUser principal) {
+        return billPaymentRepository.findAllTableRowsNewestFirst().stream()
+                .map(row -> BillPaymentTableDto.from(
+                        row,
+                        makerCheckerPolicy.awaitingChecker(row),
+                        makerCheckerPolicy.canSettleBill(principal, row)))
+                .toList();
     }
 
     @GetMapping("/{id}")
@@ -317,5 +320,66 @@ public class OrganisationMyPaymentsController {
     }
 
     public record MarkFailedRequest(@NotBlank String reason) {
+    }
+
+    /** Pure {@code bill_payment} row with zero joins to bills, corporates, branches, or commissions. */
+    public record BillPaymentTableDto(
+            String id,
+            String billFetchId,
+            BigDecimal billAmount,
+            java.time.Instant corpPaymentOn,
+            String corpId,
+            String corpName,
+            String corpPaidUserId,
+            String corpPaymentStatus,
+            String billAssignedTo,
+            String billAssignedToId,
+            String billAssignedToName,
+            String billAssignedToStatus,
+            java.time.Instant billAssignedOn,
+            java.time.Instant billPaidOn,
+            String transactionReferenceNumber,
+            String bbpsExternalReference,
+            boolean hasPaymentProof,
+            String verifiedBy,
+            String verifiedById,
+            java.time.Instant verifiedOn,
+            boolean verified,
+            String orgStatus,
+            String vendorStage,
+            boolean awaitingChecker,
+            boolean canSettle) {
+
+        static BillPaymentTableDto from(
+                com.b2bfintech.billing.repository.BillPaymentRow row,
+                boolean awaitingChecker,
+                boolean canSettle) {
+            return new BillPaymentTableDto(
+                    row.id().toString(),
+                    row.billFetchId().toString(),
+                    row.billAmount(),
+                    row.corpPaymentOn(),
+                    row.corpId(),
+                    row.corpName(),
+                    row.corpPaidUserId(),
+                    row.corpPaymentStatus().name(),
+                    row.billAssignedTo().name(),
+                    row.billAssignedToId(),
+                    row.billAssignedToName(),
+                    row.billAssignedToStatus().name(),
+                    row.billAssignedOn(),
+                    row.billPaidOn(),
+                    row.transactionReferenceNumber(),
+                    row.bbpsExternalReference(),
+                    row.paymentProof() != null && !row.paymentProof().isBlank(),
+                    row.verifiedBy(),
+                    row.verifiedById(),
+                    row.verifiedOn(),
+                    row.verified(),
+                    row.orgStatus().name(),
+                    row.vendorStage() == null ? null : row.vendorStage().name(),
+                    awaitingChecker,
+                    canSettle);
+        }
     }
 }

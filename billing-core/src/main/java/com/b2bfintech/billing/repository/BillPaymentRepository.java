@@ -23,6 +23,35 @@ public interface BillPaymentRepository extends JpaRepository<BillPayment, UUID> 
     @Query("select p from BillPayment p order by p.corpPaymentOn desc")
     List<BillPayment> findAllNewestFirst();
 
+    @Query("""
+            select new com.b2bfintech.billing.repository.BillPaymentRow(
+                p.id,
+                p.billFetch.billFetchId,
+                p.billAmount,
+                p.corpPaymentOn,
+                p.corpId,
+                p.corpName,
+                p.corpPaidUserId,
+                p.corpPaymentStatus,
+                p.billAssignedTo,
+                p.billAssignedToId,
+                p.billAssignedToName,
+                p.billAssignedToStatus,
+                p.billAssignedOn,
+                p.billPaidOn,
+                p.transactionReferenceNumber,
+                p.bbpsExternalReference,
+                p.paymentProof,
+                p.verifiedBy,
+                p.verifiedById,
+                p.verifiedOn,
+                p.verified
+            )
+            from BillPayment p
+            order by p.corpPaymentOn desc
+            """)
+    List<BillPaymentRow> findAllTableRowsNewestFirst();
+
     @Query("select p from BillPayment p where p.billFetch.billId = :billId order by p.corpPaymentOn desc")
     List<BillPayment> findByBillIdOrderByCreatedAtDesc(@Param("billId") String billId);
 
