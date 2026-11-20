@@ -69,7 +69,21 @@ public class OrganisationSettlementController {
         List<VendorSettlementService.VerifyOutcome> results = new ArrayList<>();
         for (UUID id : request.billPaymentIds()) {
             try {
-                results.add(settlementService.verifyOne(id, principal));
+                results.add(settlementService.verifyOne(id, request.reason(), principal));
+            } catch (RuntimeException ex) {
+                results.add(new VendorSettlementService.VerifyOutcome(id, false, ex.getMessage()));
+            }
+        }
+        return results;
+    }
+
+    @PostMapping("/verify-bbps")
+    public List<VendorSettlementService.VerifyOutcome> verifyViaBbps(
+            @Valid @RequestBody VerifyBbpsRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
+        List<VendorSettlementService.VerifyOutcome> results = new ArrayList<>();
+        for (UUID id : request.billPaymentIds()) {
+            try {
+                results.add(settlementService.verifyViaBbpsOne(id, principal));
             } catch (RuntimeException ex) {
                 results.add(new VendorSettlementService.VerifyOutcome(id, false, ex.getMessage()));
             }
@@ -154,7 +168,12 @@ public class OrganisationSettlementController {
                 payment, bill, categoryLabels.lookup(), false, false, id -> vendorName);
     }
 
-    public record VerifyRequest(@NotEmpty List<UUID> billPaymentIds) {
+    public record VerifyRequest(
+            @NotEmpty List<UUID> billPaymentIds,
+            @NotBlank @Size(max = 500) String reason) {
+    }
+
+    public record VerifyBbpsRequest(@NotEmpty List<UUID> billPaymentIds) {
     }
 
     public record ReimburseRequest(

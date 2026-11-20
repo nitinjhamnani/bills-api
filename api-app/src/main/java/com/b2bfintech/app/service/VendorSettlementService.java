@@ -76,7 +76,10 @@ public class VendorSettlementService {
     }
 
     public List<BillPayment> awaitingVerification() {
-        return billPaymentRepository.findByVendorStageOrderByVendorMarkedPaidAtAsc(BillPayment.VendorStage.VENDOR_PAID);
+        return billPaymentRepository.findAllNewestFirst().stream()
+                .filter(p -> p.getBillPaidOn() != null && !p.isVerified())
+                .sorted(Comparator.comparing(BillPayment::getBillPaidOn, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
     }
 
     /** Verified vendor bills that Paytrix has not paid the vendor for yet. */
@@ -105,9 +108,41 @@ public class VendorSettlementService {
     /** The checker's decision. It does not depend on a BBPS check having been run. */
     @Transactional
     public VerifyOutcome verifyOne(UUID paymentId, AuthenticatedUser actor) {
+        return verifyOne(paymentId, null, actor);
+    }
+
+    /** Manually verifies a paid-but-unverified bill (vendor-paid or Paytrix-paid) with an optional/required reason. */
+    @Transactional
+    public VerifyOutcome verifyOne(UUID paymentId, String reason, AuthenticatedUser actor) {
         BillPayment payment = awaitingCheck(paymentId);
         Bill bill = billRepository.findById(payment.getBillId())
                 .orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
+        String trimmedReason = (reason == null || reason.isBlank()) ? null : reason.trim();
+        if (trimmedReason != null && trimmedReason.length() > 500) {
+            throw new BadRequestException("Reason must be 500 characters or less");
+        }
+        String note = trimmedReason != null
+                ? "Manually verified by " + actor.displayName() + " — " + trimmedReason
+                : "Verified by " + actor.displayName() + ".";
+        return completeVerification(payment, bill, actor, note);
+    }
+
+    /** Checks live biller status via BBPS and verifies the bill only if Rs.0 is pending. */
+    @Transactional
+    public VerifyOutcome verifyViaBbpsOne(UUID paymentId, AuthenticatedUser actor) {
+        BbpsCheck check = bbpsCheck(paymentId, actor);
+        if (!check.zeroPending()) {
+            return new VerifyOutcome(paymentId, false, check.summary());
+        }
+        BillPayment payment = awaitingCheck(paymentId);
+        Bill bill = billRepository.findById(payment.getBillId())
+                .orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
+        String note = "Verified via BBPS API by " + actor.displayName() + " (provider confirmed Rs.0 pending).";
+        return completeVerification(payment, bill, actor, note);
+    }
+
+    private VerifyOutcome completeVerification(
+            BillPayment payment, Bill bill, AuthenticatedUser actor, String note) {
         Instant now = Instant.now();
         payment.setVerified(true);
         payment.setVerifiedOn(now);
@@ -116,17 +151,21 @@ public class VendorSettlementService {
         billPaymentRepository.save(payment);
 
         BillFetch fetch = payment.getBillFetch();
-        fetch.setBillStatus(BillFetch.BillStatus.PAID);
-        billFetchRepository.save(fetch);
+        if (fetch != null) {
+            fetch.setBillStatus(BillFetch.BillStatus.PAID);
+            fetch.setBillPaymentStatus(BillFetch.PaymentStatus.PAID);
+            billFetchRepository.save(fetch);
+        }
 
-        VendorPayment vendorPayment = new VendorPayment();
-        vendorPayment.setBillPaymentId(payment.getId());
-        vendorPayment.setBillAmount(payment.getBillAmount());
-        vendorPayment.setBillPaidOn(payment.getBillPaidOn());
-        vendorPayment.setCommissionPercent(commissionAssignmentService.currentPercent(payment, bill).orElse(null));
-        vendorPaymentRepository.save(vendorPayment);
+        if (payment.isWithVendor() && vendorPaymentRepository.findByBillPaymentId(payment.getId()).isEmpty()) {
+            VendorPayment vendorPayment = new VendorPayment();
+            vendorPayment.setBillPaymentId(payment.getId());
+            vendorPayment.setBillAmount(payment.getBillAmount());
+            vendorPayment.setBillPaidOn(payment.getBillPaidOn());
+            vendorPayment.setCommissionPercent(commissionAssignmentService.currentPercent(payment, bill).orElse(null));
+            vendorPaymentRepository.save(vendorPayment);
+        }
 
-        String note = "Verified by " + actor.displayName() + ".";
         activityLogService.log(payment.getBillId(), payment.getId(), BillPaymentLog.EventType.BBPS_VERIFIED, note, actor.phoneNumber());
         MoneyActionLog.record("verify", actor.userId(), payment.getId().toString());
         return new VerifyOutcome(payment.getId(), true, note);
@@ -157,7 +196,7 @@ public class VendorSettlementService {
     private BillPayment awaitingCheck(UUID paymentId) {
         BillPayment payment = billPaymentRepository.findById(paymentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
-        if (payment.getVendorStage() != BillPayment.VendorStage.VENDOR_PAID) {
+        if (payment.isVerified() || payment.getBillPaidOn() == null) {
             throw new BadRequestException("This bill is not waiting for verification");
         }
         return payment;

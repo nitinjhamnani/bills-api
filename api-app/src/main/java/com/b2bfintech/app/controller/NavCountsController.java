@@ -82,7 +82,7 @@ public class NavCountsController {
     @Transactional(readOnly = true)
     public PaytrixNavCounts paytrixCounts() {
         long billPayments = billPaymentRepository.findAllTableRowsNewestFirst().stream()
-                .filter(row -> row.orgStatus() != BillPayment.OrgStatus.PAID)
+                .filter(row -> !row.verified())
                 .count();
 
         long walletTopups = walletTopupService.listPending().size();
