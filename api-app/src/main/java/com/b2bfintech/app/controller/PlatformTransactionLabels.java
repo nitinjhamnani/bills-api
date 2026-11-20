@@ -21,6 +21,9 @@ final class PlatformTransactionLabels {
         if ("BILL_PAID".equals(category)) {
             return "Paid the vendor";
         }
+        if ("BILLER_PAID".equals(category)) {
+            return "Paid the biller";
+        }
         if ("COMMISSION".equals(category)) {
             return "Commission received";
         }

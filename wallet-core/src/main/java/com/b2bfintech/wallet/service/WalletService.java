@@ -146,6 +146,22 @@ public class WalletService {
         return row;
     }
 
+    /**
+     * Paytrix paying the biller for a bill the corporate already paid. The corporate balance stays
+     * unchanged. The debit is Paytrix's own ledger row, tied to that corporate wallet.
+     */
+    @Transactional
+    public void recordBillerPayment(String clientId, BigDecimal amount, String createdBy, String description) {
+        if (clientId == null || clientId.isBlank()) {
+            throw new BadRequestException("This bill has no corporate to record the payment against");
+        }
+        if (amount == null || amount.signum() <= 0) {
+            throw new BadRequestException("The amount must be greater than zero");
+        }
+        WalletAccount account = ensureAccount(clientId, WalletAccount.WalletType.WALLET);
+        recordPlatform(account.getId(), PlatformTransaction.Type.DEBIT, amount, "BILLER_PAID", createdBy, description);
+    }
+
     private void recordPlatform(UUID walletId, PlatformTransaction.Type type, BigDecimal amount, String category, String createdBy, String description) {
         PlatformTransaction row = new PlatformTransaction();
         row.setWalletId(walletId);

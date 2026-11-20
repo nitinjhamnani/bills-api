@@ -1,13 +1,16 @@
 package com.b2bfintech.app.service;
 
+import com.b2bfintech.billing.entity.Bill;
 import com.b2bfintech.billing.entity.BillFetch;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.entity.BillPaymentLog;
 import com.b2bfintech.billing.repository.BillFetchRepository;
 import com.b2bfintech.billing.repository.BillPaymentRepository;
+import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.common.security.AuthenticatedUser;
+import com.b2bfintech.wallet.service.WalletService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,16 +27,21 @@ public class OrganisationPaymentService {
 
     private final BillPaymentRepository billPaymentRepository;
     private final BillFetchRepository billFetchRepository;
+    private final BillRepository billRepository;
     private final BillActivityLogService activityLogService;
     private final MakerCheckerPolicy makerCheckerPolicy;
+    private final WalletService walletService;
 
     public OrganisationPaymentService(
             BillPaymentRepository billPaymentRepository, BillFetchRepository billFetchRepository,
-            BillActivityLogService activityLogService, MakerCheckerPolicy makerCheckerPolicy) {
+            BillRepository billRepository, BillActivityLogService activityLogService,
+            MakerCheckerPolicy makerCheckerPolicy, WalletService walletService) {
         this.billPaymentRepository = billPaymentRepository;
         this.billFetchRepository = billFetchRepository;
+        this.billRepository = billRepository;
         this.activityLogService = activityLogService;
         this.makerCheckerPolicy = makerCheckerPolicy;
+        this.walletService = walletService;
     }
 
     @Transactional
@@ -94,8 +102,21 @@ public class OrganisationPaymentService {
 
         activityLogService.log(payment.getBillId(), payment.getId(), BillPaymentLog.EventType.ORG_PAID,
                 "Marked paid by " + actor.phoneNumber(), actor.phoneNumber());
+        Bill bill = billRepository.findById(payment.getBillId()).orElse(null);
+        walletService.recordBillerPayment(
+                payment.getCorpId(), payment.getBillAmount(), actor.userId(), billerNote(bill, payment));
         MoneyActionLog.record("mark_paid", actor.userId(), payment.getId().toString());
         return payment;
+    }
+
+    private static String billerNote(Bill bill, BillPayment payment) {
+        String category = bill == null || bill.getCategoryName() == null || bill.getCategoryName().isBlank()
+                ? "bill" : bill.getCategoryName().trim();
+        String consumer = payment.getConsumerId();
+        String note = consumer == null || consumer.isBlank()
+                ? "Paid the " + category + " bill to the biller"
+                : "Paid the " + category + " bill " + consumer.trim() + " to the biller";
+        return note.length() <= 300 ? note : note.substring(0, 300);
     }
 
     /** Sends it back to the queue so Paytrix can pick it up and try again. The reason is logged. */
