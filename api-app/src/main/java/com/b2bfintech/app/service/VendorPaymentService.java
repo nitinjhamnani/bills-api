@@ -99,21 +99,26 @@ public class VendorPaymentService {
         return payment;
     }
 
-    /** The vendor paid the biller outside Paytrix. The proof and both references go to the checker. */
+    /** The vendor paid the biller outside Paytrix. Proof is attached for single-bill settlement and optional in bulk. */
     @Transactional
     public BillPayment markPaid(String vendorClientId, UUID paymentId, String transactionReference,
                                 String bbpsReference, MultipartFile proof, String actor) {
         clientAccountGuard.requireActiveVendor(vendorClientId);
         String transaction = requireReference(transactionReference, "Enter the transaction reference number");
         String bbps = requireReference(bbpsReference, "Enter the BBPS reference");
-        requireProof(proof);
+        boolean hasProof = proof != null && !proof.isEmpty();
+        if (hasProof) {
+            validateProof(proof);
+        }
         BillPayment payment = heldBy(vendorClientId, paymentId);
         if (stage(payment) != BillPayment.VendorStage.IN_PROGRESS) {
             throw new BadRequestException(stage(payment) == BillPayment.VendorStage.ASSIGNED
                     ? "Mark this bill in progress before you mark it paid"
                     : "This bill has already moved on");
         }
-        payment.setPaymentProof(storageService.store(proof, vendorClientId));
+        if (hasProof) {
+            payment.setPaymentProof(storageService.store(proof, vendorClientId));
+        }
         payment.setTransactionReferenceNumber(transaction);
         payment.setBbpsExternalReference(bbps);
         payment.setBillPaidOn(Instant.now());
@@ -124,10 +129,7 @@ public class VendorPaymentService {
         return payment;
     }
 
-    private static void requireProof(MultipartFile proof) {
-        if (proof == null || proof.isEmpty()) {
-            throw new BadRequestException("Attach the proof of payment");
-        }
+    private static void validateProof(MultipartFile proof) {
         if (proof.getSize() > MAX_PROOF_BYTES) {
             throw new BadRequestException("The proof must be 5 MB or smaller");
         }
