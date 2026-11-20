@@ -108,11 +108,15 @@ public class OrganisationMyPaymentsController {
         return commissionAssignmentService.preview(billPaymentIds(request));
     }
 
-    /** Assigns the selected bills that a live commission covers. Bills outside every rule stay with Paytrix. */
+    /** Assigns the selected bills to a specific vendor (when vendorId is provided) or via live commission rules. */
     @PostMapping("/assign")
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
     public List<CommissionAssignmentService.AssignmentPlan> assign(
             @RequestBody AssignBillsRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
+        if (request != null && request.vendorId() != null && !request.vendorId().isBlank()) {
+            return commissionAssignmentService.assignToVendor(
+                    billPaymentIds(request), request.vendorId().trim(), principal.userId());
+        }
         return commissionAssignmentService.assign(billPaymentIds(request), principal.userId());
     }
 
@@ -313,7 +317,7 @@ public class OrganisationMyPaymentsController {
                         .collect(Collectors.toMap(Branch::getId, Branch::getName, (left, right) -> left))::get);
     }
 
-    public record AssignBillsRequest(List<java.util.UUID> billPaymentIds) {
+    public record AssignBillsRequest(List<java.util.UUID> billPaymentIds, String vendorId) {
     }
 
     public record MarkPaidRequest(String bbpsTransactionId, String externalTransactionId, String billType) {

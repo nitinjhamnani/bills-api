@@ -9,6 +9,7 @@ import com.b2bfintech.billing.repository.BillPaymentRepository;
 import com.b2bfintech.billing.repository.BillRepository;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
 import com.b2bfintech.organisation.entity.Branch;
+import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.app.service.CategoryLabels;
@@ -41,6 +42,7 @@ public class OrganisationManagedBillsController {
     private final BillActivityLogService activityLogService;
     private final CategoryLabels categoryLabels;
     private final BranchRepository branchRepository;
+    private final AppUserRepository appUserRepository;
 
     public OrganisationManagedBillsController(
             BillRepository billRepository,
@@ -49,7 +51,8 @@ public class OrganisationManagedBillsController {
             ClientRepository clientRepository,
             BillActivityLogService activityLogService,
             CategoryLabels categoryLabels,
-            BranchRepository branchRepository) {
+            BranchRepository branchRepository,
+            AppUserRepository appUserRepository) {
         this.billRepository = billRepository;
         this.billFetchRepository = billFetchRepository;
         this.billPaymentRepository = billPaymentRepository;
@@ -57,6 +60,7 @@ public class OrganisationManagedBillsController {
         this.activityLogService = activityLogService;
         this.categoryLabels = categoryLabels;
         this.branchRepository = branchRepository;
+        this.appUserRepository = appUserRepository;
     }
 
     /** Every client's managed bills, or just one client's if {@code clientId} is given. */
@@ -69,7 +73,8 @@ public class OrganisationManagedBillsController {
                 ? billRepository.findByClientIdOrderByCreatedAtDesc(clientId)
                 : billRepository.findAllByOrderByBillIdDesc();
         Function<String, String> branches = branchNames();
-        return bills.stream().map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes, branches)).toList();
+        var users = BillDtos.userLookup(appUserRepository);
+        return bills.stream().map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes, branches, users)).toList();
     }
 
     /** Every corporate bill whose latest fetch succeeded and is currently due/unpaid. */
@@ -82,9 +87,10 @@ public class OrganisationManagedBillsController {
                 ? billRepository.findByClientIdOrderByCreatedAtDesc(clientId)
                 : billRepository.findAllByOrderByBillIdDesc();
         Function<String, String> branches = branchNames();
+        var users = BillDtos.userLookup(appUserRepository);
         return bills.stream()
                 .filter(OrganisationManagedBillsController::isDueBill)
-                .map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes, branches))
+                .map(b -> BillDtos.ManagedBillDto.from(b, serviceNames, clientNames, clientCodes, branches, users))
                 .toList();
     }
 
@@ -148,7 +154,8 @@ public class OrganisationManagedBillsController {
     private BillDtos.ManagedBillDto toDto(Bill bill) {
         return BillDtos.ManagedBillDto.from(
                 bill, categoryLabels.lookup(),
-                BillDtos.clientNameLookup(clientRepository), BillDtos.clientCodeLookup(clientRepository), branchNames());
+                BillDtos.clientNameLookup(clientRepository), BillDtos.clientCodeLookup(clientRepository),
+                branchNames(), BillDtos.userLookup(appUserRepository));
     }
 
     private Function<String, String> branchNames() {

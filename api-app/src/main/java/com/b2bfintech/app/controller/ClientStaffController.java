@@ -70,6 +70,40 @@ public class ClientStaffController {
                 .toList();
     }
 
+    @GetMapping("/{userId}")
+    public ClientUserDetailDto get(
+            @PathVariable String clientId,
+            @PathVariable String userId,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        ClientScopeGuard.assertCanAccess(principal, clientId);
+        AppUser user = requireClientUser(clientId, userId);
+        return toDetailDto(clientId, user);
+    }
+
+    @PutMapping("/{userId}")
+    public ClientUserDetailDto update(
+            @PathVariable String clientId,
+            @PathVariable String userId,
+            @Valid @RequestBody UpdateClientUserRequest request,
+            @AuthenticationPrincipal AuthenticatedUser principal) {
+        ClientScopeGuard.assertCanAccess(principal, clientId);
+        AppUser existing = requireClientUser(clientId, userId);
+        Client client = clientService.getById(clientId);
+        boolean vendor = client.getClientType() == Client.ClientType.VENDOR;
+        Set<String> allowed = vendor ? UserTypes.VENDOR_ASSIGNABLE_ROLES : UserTypes.CORPORATE_ASSIGNABLE_ROLES;
+        if (!allowed.contains(request.role())) {
+            throw new BadRequestException("role must be one of " + allowed);
+        }
+        boolean demotingAdmin = (existing.hasUserType(AppUser.UserType.CORP_ADMIN) && !"CORP_ADMIN".equals(request.role()))
+                || (existing.hasUserType(AppUser.UserType.VENDOR_ADMIN) && !"VENDOR_ADMIN".equals(request.role()));
+        if (demotingAdmin && isLastActiveAdmin(clientId, existing)) {
+            throw new BadRequestException("Cannot remove admin access from the last active admin");
+        }
+        String rawEmail = (request.email() == null || request.email().isBlank()) ? null : request.email().trim();
+        AppUser updated = provisioningService.updateUserProfile(userId, request.fullName().trim(), rawEmail, request.role());
+        return toDetailDto(clientId, updated);
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public ClientUserDto add(
@@ -163,6 +197,55 @@ public class ClientStaffController {
                         || user.hasUserType(AppUser.UserType.VENDOR_ADMIN))
                 .filter(user -> user.getStatus() == AppUser.UserStatus.ACTIVE)
                 .count() <= 1;
+    }
+
+    private ClientUserDetailDto toDetailDto(String clientId, AppUser user) {
+        Client client = clientService.getById(clientId);
+        boolean vendor = client.getClientType() == Client.ClientType.VENDOR;
+        String scope = vendor ? "VENDOR" : "CORPORATE";
+        String role = vendor ? user.getRole().getName() : branchService.screenRole(user);
+        List<ClientController.UserBranchDto> branches = List.of();
+        if (!vendor) {
+            branches = branchService.branchesForUser(clientId, user.getUserId()).stream()
+                    .map(ClientController.UserBranchDto::from)
+                    .toList();
+        }
+        return new ClientUserDetailDto(
+                user.getId(),
+                user.getPhoneNumber(),
+                user.getUserCode(),
+                user.getFullName(),
+                user.getEmail(),
+                scope,
+                role,
+                user.getStatus().name(),
+                user.getCreatedOn(),
+                client.getId(),
+                client.getClientName(),
+                client.getClientCode(),
+                branches);
+    }
+
+    public record UpdateClientUserRequest(
+            @NotBlank String fullName,
+            @jakarta.validation.constraints.Email String email,
+            @NotBlank String role) {
+    }
+
+    public record ClientUserDetailDto(
+            String id,
+            String phoneNumber,
+            String userCode,
+            String fullName,
+            String email,
+            String scope,
+            String role,
+            String status,
+            java.time.Instant createdAt,
+            String clientId,
+            String clientName,
+            String clientCode,
+            List<ClientController.UserBranchDto> branches) {
     }
 
     public record SetPasswordRequest(@NotBlank @Size(min = 6, max = 72) String password) {

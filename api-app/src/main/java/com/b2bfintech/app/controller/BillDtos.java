@@ -5,7 +5,9 @@ import com.b2bfintech.billing.entity.BillFetch;
 import com.b2bfintech.billing.entity.BillPayment;
 import com.b2bfintech.billing.entity.BillPaymentLog;
 import com.b2bfintech.common.spi.BillingProvider;
+import com.b2bfintech.organisation.entity.AppUser;
 import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.wallet.entity.LedgerEntry;
 import com.b2bfintech.wallet.entity.WalletAccount;
@@ -38,6 +40,25 @@ final class BillDtos {
         Map<String, String> codes = clientRepository.findAll().stream()
                 .collect(Collectors.toMap(Client::getId, c -> c.getClientCode() != null ? c.getClientCode() : "", (a, b) -> a));
         return id -> codes.getOrDefault(id, "");
+    }
+
+    static Function<String, AppUser> userLookup(AppUserRepository appUserRepository) {
+        Map<String, AppUser> users = appUserRepository.findAll().stream()
+                .collect(Collectors.toMap(AppUser::getUserId, Function.identity(), (a, b) -> a));
+        return users::get;
+    }
+
+    private static String creatorRoleLabel(AppUser user) {
+        if (user == null || user.getUserType() == null) {
+            return null;
+        }
+        return switch (user.getUserType()) {
+            case CORP_ADMIN -> "CORP_ADMIN";
+            case CORP_USER -> "BRANCH_USER";
+            case SUPER_ADMIN, ORG_SUPERADMIN -> "SUPER_ADMIN";
+            case ORG_ADMIN -> "ORGANISATION_ADMIN";
+            default -> user.getRole() != null ? user.getRole().getName() : user.getUserType().name();
+        };
     }
 
     static List<AmountComponentDto> toAmountComponentDtos(List<BillingProvider.AmountComponent> breakdown) {
@@ -127,22 +148,32 @@ final class BillDtos {
             boolean autoFetchEnabled, boolean autoPayEnabled,
             Instant createdAt, Instant updatedAt,
             String branchId, String branchName,
+            String createdByUserId, String createdByName, String createdByRole,
             String latestBillFetchId) {
 
         static ManagedBillDto from(Bill b, Function<String, String> serviceNameLookup) {
-            return from(b, serviceNameLookup, null, null, null);
+            return from(b, serviceNameLookup, null, null, null, null);
         }
 
         static ManagedBillDto from(Bill b, Function<String, String> serviceNameLookup,
                                     Function<String, String> clientNameLookup,
                                     Function<String, String> clientCodeLookup) {
-            return from(b, serviceNameLookup, clientNameLookup, clientCodeLookup, null);
+            return from(b, serviceNameLookup, clientNameLookup, clientCodeLookup, null, null);
         }
 
         static ManagedBillDto from(Bill b, Function<String, String> serviceNameLookup,
                                     Function<String, String> clientNameLookup,
                                     Function<String, String> clientCodeLookup,
                                     Function<String, String> branchNameLookup) {
+            return from(b, serviceNameLookup, clientNameLookup, clientCodeLookup, branchNameLookup, null);
+        }
+
+        static ManagedBillDto from(Bill b, Function<String, String> serviceNameLookup,
+                                    Function<String, String> clientNameLookup,
+                                    Function<String, String> clientCodeLookup,
+                                    Function<String, String> branchNameLookup,
+                                    Function<String, AppUser> userLookup) {
+            AppUser creator = (userLookup != null && b.getUserId() != null) ? userLookup.apply(b.getUserId()) : null;
             return new ManagedBillDto(
                     b.getId().toString(), b.getClientId().toString(),
                     clientNameLookup != null ? clientNameLookup.apply(b.getClientId()) : null,
@@ -158,6 +189,9 @@ final class BillDtos {
                     b.getCreatedAt(), b.getUpdatedAt(),
                     b.getBranchId(),
                     branchNameLookup == null || b.getBranchId() == null ? null : branchNameLookup.apply(b.getBranchId()),
+                    b.getUserId(),
+                    creator != null ? creator.getFullName() : null,
+                    creatorRoleLabel(creator),
                     b.getLatestFetch() == null || b.getLatestFetch().getBillFetchId() == null
                             ? null
                             : b.getLatestFetch().getBillFetchId().toString());

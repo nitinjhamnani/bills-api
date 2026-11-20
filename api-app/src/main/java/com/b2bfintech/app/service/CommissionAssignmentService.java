@@ -78,6 +78,50 @@ public class CommissionAssignmentService {
         return decide(paymentIds);
     }
 
+    /** Manually assigns the selected Paytrix bills to a chosen active vendor. */
+    @Transactional
+    public List<AssignmentPlan> assignToVendor(List<UUID> paymentIds, String vendorId, String actor) {
+        if (paymentIds == null || paymentIds.isEmpty()) {
+            throw new BadRequestException("Choose at least one bill");
+        }
+        Client vendor = clientService.getById(vendorId);
+        if (vendor.getClientType() != Client.ClientType.VENDOR) {
+            throw new BadRequestException("Selected account is not a vendor");
+        }
+        if (vendor.getStatus() != Client.ClientStatus.ACTIVE) {
+            throw new BadRequestException("Selected vendor is not active");
+        }
+        List<AssignmentPlan> done = new ArrayList<>();
+        for (UUID id : new LinkedHashSet<>(paymentIds)) {
+            BillPayment payment = billPaymentRepository.findById(id)
+                    .orElseThrow(() -> new ResourceNotFoundException("Bill payment not found"));
+            Bill bill = billRepository.findById(payment.getBillId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
+            String blocked = blockReason(payment);
+            String biller = bill.getBillerName() == null || bill.getBillerName().isBlank()
+                    ? bill.getOperatorName() : bill.getBillerName();
+            if (blocked != null) {
+                done.add(new AssignmentPlan(
+                        payment.getId(), biller, bill.getCustomerBillAccountNumber(),
+                        payment.getBillAmount(), payment.getCorpName(),
+                        false, null, null, null, blocked));
+                continue;
+            }
+            payment.assignToVendor(vendor.getId(), vendor.getClientName(), Instant.now());
+            billPaymentRepository.save(payment);
+            BigDecimal rate = currentPercent(payment, bill).orElse(null);
+            String rateNote = rate != null ? " at " + percentText(rate) : "";
+            activityLogService.log(payment.getBillId(), payment.getId(), BillPaymentLog.EventType.ASSIGNED,
+                    "Assigned to " + vendor.getClientName() + rateNote + ".", actor);
+            MoneyActionLog.record("assign", actor, payment.getId().toString());
+            done.add(new AssignmentPlan(
+                    payment.getId(), biller, bill.getCustomerBillAccountNumber(),
+                    payment.getBillAmount(), payment.getCorpName(),
+                    true, vendor.getId(), vendor.getClientName(), rate, null));
+        }
+        return done;
+    }
+
     /** Assigns the selected Paytrix bills that a live commission covers. The rest stay put. */
     @Transactional
     public List<AssignmentPlan> assign(List<UUID> paymentIds, String actor) {

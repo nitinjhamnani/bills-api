@@ -17,6 +17,7 @@ import com.b2bfintech.common.spi.bbps.BillParameterValidator;
 import com.b2bfintech.organisation.entity.Branch;
 import com.b2bfintech.organisation.entity.ClientCategoryConfig;
 import com.b2bfintech.organisation.entity.OrganisationCategoryConfig;
+import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
 import jakarta.validation.Valid;
@@ -61,13 +62,15 @@ public class ManagedBillController {
     private final BbpsLookupService bbpsLookupService;
     private final BranchRepository branchRepository;
     private final BranchService branchService;
+    private final AppUserRepository appUserRepository;
 
     public ManagedBillController(
             ManagedBillService managedBillService, com.b2bfintech.billing.repository.BillRepository billRepository,
             com.b2bfintech.billing.repository.BillPaymentRepository billPaymentRepository,
             BillActivityLogService activityLogService, CategoryLabels categoryLabels,
             CategoryEnablementService categoryEnablementService, BbpsLookupService bbpsLookupService,
-            BranchRepository branchRepository, BranchService branchService) {
+            BranchRepository branchRepository, BranchService branchService,
+            AppUserRepository appUserRepository) {
         this.managedBillService = managedBillService;
         this.billRepository = billRepository;
         this.billPaymentRepository = billPaymentRepository;
@@ -77,6 +80,7 @@ public class ManagedBillController {
         this.bbpsLookupService = bbpsLookupService;
         this.branchRepository = branchRepository;
         this.branchService = branchService;
+        this.appUserRepository = appUserRepository;
     }
 
     @PostMapping
@@ -152,9 +156,10 @@ public class ManagedBillController {
         ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Function<String, String> names = categoryLabels.lookup();
         Function<String, String> branches = branchNames();
+        var users = BillDtos.userLookup(appUserRepository);
         return billRepository.findByClientIdOrderByCreatedAtDesc(clientId).stream()
                 .filter(bill -> visibleTo(principal, bill))
-                .map(b -> BillDtos.ManagedBillDto.from(b, names, null, null, branches)).toList();
+                .map(b -> BillDtos.ManagedBillDto.from(b, names, null, null, branches, users)).toList();
     }
 
     @GetMapping("/{billId}")
@@ -240,7 +245,8 @@ public class ManagedBillController {
     }
 
     private BillDtos.ManagedBillDto toDto(Bill bill) {
-        return BillDtos.ManagedBillDto.from(bill, categoryLabels.lookup(), null, null, branchNames());
+        return BillDtos.ManagedBillDto.from(
+                bill, categoryLabels.lookup(), null, null, branchNames(), BillDtos.userLookup(appUserRepository));
     }
 
     private Bill ownedBill(String clientId, String billId, AuthenticatedUser principal) {

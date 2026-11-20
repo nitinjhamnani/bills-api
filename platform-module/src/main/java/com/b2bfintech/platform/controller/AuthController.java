@@ -8,6 +8,7 @@ import com.b2bfintech.platform.dto.PasswordLoginDto;
 import com.b2bfintech.platform.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
@@ -15,6 +16,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -80,6 +82,15 @@ public class AuthController {
         );
     }
 
+    @PutMapping("/profile")
+    @PreAuthorize("isAuthenticated()")
+    public LoginResponseDto.UserProfileDto updateProfile(
+            @AuthenticationPrincipal AuthenticatedUser principal,
+            @Valid @RequestBody UpdateProfileRequest request) {
+        AuthService.SessionState state = authService.updateProfile(principal, request.fullName(), request.email());
+        return toUserProfile(state.user(), state.portal(), state.role(), state.clientId(), state.branchId());
+    }
+
     private static LoginResponseDto toResponse(AuthService.LoginResult result) {
         return new LoginResponseDto(
                 result.sessionId().toString(),
@@ -103,6 +114,9 @@ public class AuthController {
                 user.getPhone(),
                 user.getUserId(),
                 user.getName(),
+                user.getEmail(),
+                user.getStatus().name(),
+                user.getCreatedOn() != null ? user.getCreatedOn().toString() : null,
                 portal.name(),
                 user.getUserType().name(),
                 role,
@@ -128,5 +142,10 @@ public class AuthController {
     public record ChangePasswordRequest(
             @NotBlank String currentPassword,
             @NotBlank @Size(min = 6, max = 72) String newPassword) {
+    }
+
+    public record UpdateProfileRequest(
+            @NotBlank @Size(max = 150) String fullName,
+            @Email @Size(max = 150) String email) {
     }
 }

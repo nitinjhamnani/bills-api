@@ -64,6 +64,9 @@ public class WalletTransactionRequest {
     @Column(name = "approved_on")
     private Instant approvedOn;
 
+    @Column(name = "remarks", length = 500)
+    private String remarks;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private Status status = Status.PENDING;

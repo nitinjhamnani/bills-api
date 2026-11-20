@@ -84,27 +84,38 @@ public class WalletTopupService {
 
     @Transactional
     public WalletTransactionRequest review(UUID requestId, boolean approve, AuthenticatedUser reviewer) {
+        return review(requestId, approve, null, reviewer);
+    }
+
+    @Transactional
+    public WalletTransactionRequest review(UUID requestId, boolean approve, String remarks, AuthenticatedUser reviewer) {
         WalletTransactionRequest request = repository.findForUpdate(requestId)
                 .orElseThrow(() -> new ResourceNotFoundException("Top-up request not found"));
         if (request.getStatus() != WalletTransactionRequest.Status.PENDING) {
             throw new BadRequestException("This top-up request has already been reviewed");
         }
         makerCheckerPolicy.assertCanReviewTopup(reviewer, request.getAmount());
+        String trimmedRemarks = (remarks == null || remarks.isBlank()) ? null : remarks.trim();
+        if (trimmedRemarks != null && trimmedRemarks.length() > 500) {
+            throw new BadRequestException("Remarks must be 500 characters or less");
+        }
         request.setApprovedBy(reviewer.displayName());
         request.setApprovedById(reviewer.userId());
         request.setApprovedOn(Instant.now());
+        request.setRemarks(trimmedRemarks);
+        String remarkSuffix = trimmedRemarks != null ? " — " + trimmedRemarks : "";
         if (!approve) {
             request.setStatus(WalletTransactionRequest.Status.REJECTED);
             request = repository.save(request);
             auditService.record("TOPUP_REJECTED", "WalletTransactionRequest", request.getRequestId().toString(),
-                    "rejected by " + reviewer.phoneNumber());
+                    "rejected by " + reviewer.phoneNumber() + remarkSuffix);
             return request;
         }
         request.setStatus(WalletTransactionRequest.Status.APPROVED);
         request = repository.save(request);
         walletService.credit(request.getCorpId(), request.getAmount(), LedgerEntry.RECHARGE, reviewer.userId());
         auditService.record("TOPUP_APPROVED", "WalletTransactionRequest", request.getRequestId().toString(),
-                "approved by " + reviewer.phoneNumber() + ", credited " + request.getAmount());
+                "approved by " + reviewer.phoneNumber() + ", credited " + request.getAmount() + remarkSuffix);
         MoneyActionLog.record("wallet_approve", reviewer.userId(), request.getRequestId().toString());
         return request;
     }

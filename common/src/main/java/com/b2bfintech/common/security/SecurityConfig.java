@@ -85,7 +85,8 @@ public class SecurityConfig {
                             boolean sales = hasAuthority(current, "ROLE_SALES")
                                     && !"/api/v1/auth/session".equals(context.getRequest().getRequestURI())
                                     && !"/api/v1/auth/logout".equals(context.getRequest().getRequestURI())
-                                    && !"/api/v1/auth/password/change".equals(context.getRequest().getRequestURI());
+                                    && !"/api/v1/auth/password/change".equals(context.getRequest().getRequestURI())
+                                    && !"/api/v1/auth/profile".equals(context.getRequest().getRequestURI());
                             return new AuthorizationDecision(!sales);
                         })
                 )

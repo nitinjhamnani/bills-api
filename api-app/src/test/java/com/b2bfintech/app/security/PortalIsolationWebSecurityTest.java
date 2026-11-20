@@ -20,6 +20,7 @@ import com.b2bfintech.common.security.Portal;
 import com.b2bfintech.common.security.SecurityConfig;
 import com.b2bfintech.common.security.SessionValidator;
 import com.b2bfintech.organisation.entity.Client;
+import com.b2bfintech.organisation.repository.AppUserRepository;
 import com.b2bfintech.organisation.repository.BranchRepository;
 import com.b2bfintech.organisation.repository.ClientRepository;
 import com.b2bfintech.organisation.service.CategoryEnablementService;
@@ -105,6 +106,8 @@ class PortalIsolationWebSecurityTest {
     private WalletAccountRepository walletAccountRepository;
     @MockBean
     private ClientRepository clientRepository;
+    @MockBean
+    private AppUserRepository appUserRepository;
 
     @Test
     void vendorAdminCannotAccessCorporateBillsOrPaytrixEndpoints() throws Exception {

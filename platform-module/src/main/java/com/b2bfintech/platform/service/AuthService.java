@@ -178,6 +178,25 @@ public class AuthService {
         appUserRepository.save(user);
     }
 
+    public SessionState updateProfile(AuthenticatedUser principal, String fullName, String email) {
+        if (principal == null || principal.userId() == null) {
+            throw new UnauthorizedException("Sign in to continue");
+        }
+        if (fullName == null || fullName.isBlank()) {
+            throw new BadRequestException("Full name is required");
+        }
+        AppUser user = appUserRepository.findById(principal.userId())
+                .orElseThrow(() -> new UnauthorizedException("Sign in to continue"));
+        String normalizedEmail = (email == null || email.isBlank()) ? null : email.trim();
+        if (normalizedEmail != null && appUserRepository.existsByEmailAndUserIdNot(normalizedEmail, user.getUserId())) {
+            throw new BadRequestException("Another user already uses this email address");
+        }
+        user.setFullName(fullName.trim());
+        user.setEmail(normalizedEmail);
+        appUserRepository.save(user);
+        return currentSession(principal);
+    }
+
     public SessionState currentSession(AuthenticatedUser principal) {
         if (principal == null || principal.sessionId() == null) {
             throw new UnauthorizedException("Sign in to continue");

@@ -135,7 +135,7 @@ public class WalletController {
     /** {@code paymentMode} is the mode column and {@code paymentReference} is the UTR. */
     public record TopupDto(String id, BigDecimal amount, String paymentMode, String paymentReference,
                            boolean hasProof, String status, Instant createdAt, String createdBy,
-                           String approvedBy, Instant approvedOn, Instant lastUpdated, boolean canReview) {
+                           String approvedBy, Instant approvedOn, String remarks, Instant lastUpdated, boolean canReview) {
         public static TopupDto from(WalletTransactionRequest r) {
             return from(r, false);
         }
@@ -143,7 +143,7 @@ public class WalletController {
         public static TopupDto from(WalletTransactionRequest r, boolean canReview) {
             return new TopupDto(r.getRequestId().toString(), r.getAmount(), r.getMode().name(), r.getUtr(),
                     r.getProof() != null && !r.getProof().isBlank(), r.getStatus().name(), r.getCreatedDate(),
-                    r.getCreatedBy(), r.getApprovedBy(), r.getApprovedOn(), r.getLastUpdated(), canReview);
+                    r.getCreatedBy(), r.getApprovedBy(), r.getApprovedOn(), r.getRemarks(), r.getLastUpdated(), canReview);
         }
     }
 }

@@ -212,7 +212,7 @@ public class Bill {
     }
 
     public Instant getCreatedAt() {
-        return createdAt != null ? createdAt : getLastFetchAt();
+        return createdAt;
     }
 
     public Instant getUpdatedAt() {

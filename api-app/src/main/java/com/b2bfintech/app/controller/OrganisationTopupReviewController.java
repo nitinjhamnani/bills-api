@@ -53,19 +53,19 @@ public class OrganisationTopupReviewController {
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER')")
     public WalletController.TopupDto review(
             @PathVariable UUID id, @RequestBody ReviewRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
-        return WalletController.TopupDto.from(walletTopupService.review(id, request.approve(), principal));
+        return WalletController.TopupDto.from(walletTopupService.review(id, request.approve(), request.remarks(), principal));
     }
 
-    public record ReviewRequest(boolean approve) {
+    public record ReviewRequest(boolean approve, String remarks) {
     }
 
     public record PendingTopupDto(String id, String clientId, String clientName, String clientCode, BigDecimal amount,
                                   String paymentMode, String paymentReference, boolean hasProof, String status,
-                                  Instant createdAt, String createdBy, boolean canReview) {
+                                  Instant createdAt, String createdBy, String remarks, boolean canReview) {
         static PendingTopupDto from(WalletTransactionRequest r, String clientName, String clientCode, boolean canReview) {
             return new PendingTopupDto(r.getRequestId().toString(), r.getCorpId(), clientName, clientCode, r.getAmount(),
                     r.getMode().name(), r.getUtr(), r.getProof() != null && !r.getProof().isBlank(), r.getStatus().name(),
-                    r.getCreatedDate(), r.getCreatedBy(), canReview);
+                    r.getCreatedDate(), r.getCreatedBy(), r.getRemarks(), canReview);
         }
     }
 }

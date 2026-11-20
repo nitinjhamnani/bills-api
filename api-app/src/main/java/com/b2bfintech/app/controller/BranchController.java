@@ -36,6 +36,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -70,7 +71,7 @@ public class BranchController {
     @PreAuthorize("hasAnyRole('CORP_ADMIN','CORP_OPERATOR')")
     public List<BranchDto> list(@PathVariable String clientId, @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCorporateAccess(principal, clientId);
-        return branchService.list(clientId).stream().map(this::toDto).toList();
+        return branchService.overview(clientId).stream().map(this::toOverviewDto).toList();
     }
 
     @GetMapping("/branches/{branchId}")
@@ -78,7 +79,7 @@ public class BranchController {
     public BranchDto get(@PathVariable String clientId, @PathVariable String branchId,
                          @AuthenticationPrincipal AuthenticatedUser principal) {
         ClientScopeGuard.assertCorporateAccess(principal, clientId);
-        return toDto(branchService.get(clientId, branchId));
+        return toOverviewDto(branchService.overviewOne(clientId, branchId));
     }
 
     @PostMapping("/branches")
@@ -90,7 +91,35 @@ public class BranchController {
         Branch branch = branchService.create(
                 clientId, request.name(), request.address(), request.state(), request.location(), request.code(),
                 request.phoneNumber(), request.userName(), request.userPassword(), request.userIds());
-        return toDto(branch);
+        return toOverviewDto(branchService.overviewOne(clientId, branch.getId()));
+    }
+
+    @PatchMapping("/branches/{branchId}/suspend")
+    @PreAuthorize("hasRole('CORP_ADMIN')")
+    public BranchDto suspend(@PathVariable String clientId, @PathVariable String branchId,
+                             @AuthenticationPrincipal AuthenticatedUser principal) {
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
+        branchService.setBranchActive(clientId, branchId, false);
+        return toOverviewDto(branchService.overviewOne(clientId, branchId));
+    }
+
+    @PatchMapping("/branches/{branchId}/reactivate")
+    @PreAuthorize("hasRole('CORP_ADMIN')")
+    public BranchDto reactivate(@PathVariable String clientId, @PathVariable String branchId,
+                                @AuthenticationPrincipal AuthenticatedUser principal) {
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
+        branchService.setBranchActive(clientId, branchId, true);
+        return toOverviewDto(branchService.overviewOne(clientId, branchId));
+    }
+
+    @PutMapping("/branches/{branchId}/users")
+    @PreAuthorize("hasRole('CORP_ADMIN')")
+    public BranchDto replaceUsers(@PathVariable String clientId, @PathVariable String branchId,
+                                  @RequestBody ReplaceBranchUsersRequest request,
+                                  @AuthenticationPrincipal AuthenticatedUser principal) {
+        ClientScopeGuard.assertCorporateAccess(principal, clientId);
+        branchService.setUsersForBranch(clientId, branchId, request.userIds());
+        return toOverviewDto(branchService.overviewOne(clientId, branchId));
     }
 
     @GetMapping("/branches/mine")
@@ -260,7 +289,7 @@ public class BranchController {
         ClientScopeGuard.assertCorporateAccess(principal, clientId);
         Branch branch = branchService.update(
                 clientId, branchId, request.name(), request.address(), request.state(), request.location(), request.code());
-        return toDto(branch);
+        return toOverviewDto(branchService.overviewOne(clientId, branch.getId()));
     }
 
     @PostMapping("/branches/{branchId}/users")
@@ -335,6 +364,9 @@ public class BranchController {
     public record AssignUsersRequest(@NotEmpty List<String> userIds) {
     }
 
+    public record ReplaceBranchUsersRequest(List<String> userIds) {
+    }
+
     public record PoolUserDto(String id, String fullName, String phoneNumber, String role) {
         static PoolUserDto from(AppUser user, String screenRole) {
             return new PoolUserDto(
@@ -357,25 +389,63 @@ public class BranchController {
     }
 
     private BranchDto toDto(Branch branch) {
-        List<BranchUserDto> users = branchService.users(branch.getId()).stream()
+        return toOverviewDto(branchService.overviewOne(branch.getSourceId(), branch.getId()));
+    }
+
+    private BranchDto toOverviewDto(BranchService.BranchOverview overview) {
+        Branch branch = overview.branch();
+        List<BranchUserDto> users = (overview.users() == null ? List.<AppUser>of() : overview.users()).stream()
                 .map(user -> BranchUserDto.from(user, branchService.passwordSet(user.getId())))
                 .toList();
         return new BranchDto(
-                branch.getId(), branch.getName(), branch.getAddress(), branch.getState(), branch.getLocation(), branch.getCode(), users);
+                branch.getId(),
+                branch.getName(),
+                branch.getAddress(),
+                branch.getState(),
+                branch.getLocation(),
+                branch.getCode(),
+                overview.managedBillCount(),
+                overview.userCount(),
+                overview.status(),
+                users);
     }
 
-    public record BranchUserDto(String id, String fullName, String phoneNumber, String role, boolean passwordSet) {
+    public record BranchUserDto(
+            String id,
+            String userCode,
+            String fullName,
+            String phoneNumber,
+            String email,
+            String role,
+            String status,
+            boolean passwordSet) {
         static BranchUserDto from(AppUser user, boolean passwordSet) {
             String role = user.hasUserType(AppUser.UserType.CORP_USER)
                     ? "BRANCH_USER"
                     : (user.getRole() == null ? null : user.getRole().getName());
             return new BranchUserDto(
-                    user.getId(), user.getFullName(), user.getPhoneNumber(), role, passwordSet);
+                    user.getId(),
+                    user.getUserCode(),
+                    user.getFullName(),
+                    user.getPhoneNumber(),
+                    user.getEmail(),
+                    role,
+                    user.getStatus().name(),
+                    passwordSet);
         }
     }
 
     public record BranchDto(
-            String id, String name, String address, String state, String location, String code, List<BranchUserDto> users) {
+            String id,
+            String name,
+            String address,
+            String state,
+            String location,
+            String code,
+            long managedBillCount,
+            int userCount,
+            String status,
+            List<BranchUserDto> users) {
     }
 
     public record BranchHomeDto(
