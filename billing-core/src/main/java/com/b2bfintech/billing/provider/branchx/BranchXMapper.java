@@ -30,6 +30,10 @@ public final class BranchXMapper {
     private static final String[] NAME_KEYS = {
             "customerName", "customer_name", "consumerName", "ConsumerReferenceName", "utilitycustomername"};
     private static final String[] PERIOD_KEYS = {"billPeriod", "Billperiod", "billperiod", "bill_period"};
+    private static final String[] REFERENCE_KEYS = {
+            "transactionId", "txnId", "transactionReference", "transactionRef", "referenceId",
+            "referenceNumber", "refId", "bbpsRefId", "bbpsTxnId", "paymentId", "txnRefId", "approvalRefNum"
+    };
     private static final DateTimeFormatter BASIC_DATE = DateTimeFormatter.BASIC_ISO_DATE;
     private static final DateTimeFormatter DASHED_DATE = DateTimeFormatter.ofPattern("dd-MM-yyyy");
 
@@ -90,6 +94,10 @@ public final class BranchXMapper {
             throw new BillFetchFailedException("Bill provider returned no bill fields", false);
         }
         if (!success(body)) {
+            if (nothingDue(body)) {
+                return new BillingProvider.FetchedBill(
+                        null, null, BigDecimal.ZERO, null, null, null, null, List.of(), null);
+            }
             throw new BillFetchFailedException(failureMessage(body), permanent(body));
         }
         JsonNode data = unwrap(body);
@@ -117,6 +125,68 @@ public final class BranchXMapper {
                 first(biller, decoded, data, PERIOD_KEYS),
                 List.of(),
                 text(data, "billFetchBase64"));
+    }
+
+    /** The pay token is the original billFetchBase64 text. It is not decoded or trimmed. */
+    public static String payToken(JsonNode body) {
+        if (body == null || body.isNull()) {
+            return null;
+        }
+        String token = text(unwrap(body), "billFetchBase64");
+        if (token == null) {
+            token = text(body, "billFetchBase64");
+        }
+        return token;
+    }
+
+    /** Amount, mobile, and the unchanged token. The customer name is sent only when it is present. */
+    public static ObjectNode paymentRequest(ObjectMapper json, BillingProvider.FetchedBillSettlement settlement) {
+        ObjectNode payload = json.createObjectNode();
+        payload.put("amount", settlement.amount());
+        payload.put("userMobileNumber", settlement.userMobileNumber() == null ? "" : settlement.userMobileNumber());
+        payload.put("billFetchBase64", settlement.billFetchBase64() == null ? "" : settlement.billFetchBase64());
+        if (settlement.userName() != null && !settlement.userName().isBlank()) {
+            payload.put("userName", settlement.userName().trim());
+        }
+        return payload;
+    }
+
+    /**
+     * HTTP 200 and status SUCCESS is a paid bill. FAILED, any other status, and HTTP 500 stay unpaid.
+     * A short id is taken from data when one of the usual reference fields is present.
+     */
+    public static BillingProvider.SettlementResult paymentResult(int httpStatus, JsonNode body) {
+        if (body == null || body.isNull() || !body.isObject()) {
+            return new BillingProvider.SettlementResult(
+                    false, "Bill provider returned a response that could not be read", null, null);
+        }
+        boolean paid = httpStatus == 200 && "SUCCESS".equalsIgnoreCase(text(body, "status"));
+        String message = text(body, "message");
+        if (message == null) {
+            message = text(body, "title");
+        }
+        if (!paid) {
+            return new BillingProvider.SettlementResult(
+                    false, message == null ? "Bill provider did not accept the payment" : message, null, dataText(body));
+        }
+        return new BillingProvider.SettlementResult(true, message, reference(unwrap(body)), dataText(body));
+    }
+
+    /**
+     * A SUCCESS body with a numeric balance can be spent. FAILED, PENDING, and a missing balance cannot.
+     * The returned message keeps the provider wording and status code.
+     */
+    public static BillingProvider.WalletBalance walletBalance(JsonNode body) {
+        if (body == null || body.isNull() || !body.isObject()) {
+            return unreadBalance(null, null);
+        }
+        String status = text(body, "status");
+        String statusCode = text(body, "statusCode");
+        String message = text(body, "message");
+        BigDecimal balance = decimal(body.get("balance"));
+        boolean readable = "SUCCESS".equalsIgnoreCase(status) && balance != null;
+        return new BillingProvider.WalletBalance(
+                readable, readable ? balance : null, status, statusCode, providerNotice(message, statusCode));
     }
 
     /** 10X reads the account from paramValue. The label stays paramName. */
@@ -180,6 +250,23 @@ public final class BranchXMapper {
             return code == null || "200".equals(code);
         }
         return false;
+    }
+
+    /**
+     * BillAvenue reports a paid period as FAILED with BFR004. The same wording, without the code,
+     * is the same outcome. Every other failure stays a failure.
+     */
+    private static boolean nothingDue(JsonNode body) {
+        if ("BFR004".equalsIgnoreCase(providerErrorCode(body))) {
+            return true;
+        }
+        String lower = failureMessage(body).toLowerCase();
+        return lower.contains("already paid") || lower.contains("no bill due");
+    }
+
+    private static String providerErrorCode(JsonNode body) {
+        String code = text(unwrap(body), "providerErrorCode");
+        return code == null ? text(body, "providerErrorCode") : code;
     }
 
     static String failureMessage(JsonNode body) {
@@ -286,6 +373,72 @@ public final class BranchXMapper {
             return null;
         }
         return value;
+    }
+
+    private static String reference(JsonNode data) {
+        if (data == null || data.isNull()) {
+            return null;
+        }
+        if (data.isTextual()) {
+            String text = data.asText();
+            return text == null || text.isBlank() ? null : text;
+        }
+        if (!data.isObject()) {
+            return null;
+        }
+        String direct = first(data, REFERENCE_KEYS);
+        if (direct != null) {
+            return direct;
+        }
+        Iterator<JsonNode> values = data.elements();
+        while (values.hasNext()) {
+            JsonNode child = values.next();
+            if (child != null && child.isObject()) {
+                String nested = first(child, REFERENCE_KEYS);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    static String providerNotice(String message, String statusCode) {
+        if (message == null) {
+            return statusCode == null
+                    ? "The wallet balance could not be read"
+                    : "The wallet balance could not be read (" + statusCode + ")";
+        }
+        return statusCode == null ? message : message + " (" + statusCode + ")";
+    }
+
+    private static BigDecimal decimal(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        try {
+            if (node.isNumber()) {
+                return node.decimalValue();
+            }
+            if (node.isTextual() && !node.asText().isBlank()) {
+                return new BigDecimal(node.asText().trim().replace(",", ""));
+            }
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+        return null;
+    }
+
+    private static BillingProvider.WalletBalance unreadBalance(String status, String statusCode) {
+        return new BillingProvider.WalletBalance(
+                false, null, status, statusCode, providerNotice(null, statusCode));
+    }
+
+    private static String dataText(JsonNode body) {
+        if (body == null || !body.has("data") || body.get("data").isNull()) {
+            return null;
+        }
+        return body.get("data").toString();
     }
 
     private static String text(JsonNode node, String field) {

@@ -25,8 +25,8 @@ import java.util.Map;
 /**
  * Managed Bills: creating one inserts the {@code bill} row immediately (PROCESSING) and returns it.
  * The provider fetch runs after that transaction commits, on a background thread, and
- * {@link BillFetchResolutionService} writes the real status. A corporate can manage each account
- * number once. The same primary parameter value cannot be added again on any branch.
+ * {@link BillFetchResolutionService} writes the real status. An account number can be managed
+ * once on the platform. The same company is told which branch already has it.
  */
 @Service
 public class ManagedBillService {
@@ -96,7 +96,7 @@ public class ManagedBillService {
         try {
             bill = billRepository.saveAndFlush(bill);
         } catch (org.springframework.dao.DataIntegrityViolationException ex) {
-            throw new BadRequestException("This account number is already managed for this company.");
+            throw new BadRequestException("This account number is already managed.");
         }
         activityLogService.log(bill.getId(), null, BillPaymentLog.EventType.CREATED, "Bill created", userId);
         MoneyActionLog.record("create", userId, bill.getId());
@@ -105,11 +105,15 @@ public class ManagedBillService {
     }
 
     private void rejectDuplicateAccount(String clientId, String accountNumber) {
-        List<Bill> existing = billRepository.findByClientAndPrimaryParamValue(clientId, accountNumber);
+        List<Bill> existing = billRepository.findByPrimaryParamValue(accountNumber);
         if (existing.isEmpty()) {
             return;
         }
-        String branchName = branchRepository.findById(existing.get(0).getBranchId())
+        Bill match = existing.get(0);
+        if (!clientId.equals(match.getClientId())) {
+            throw new BadRequestException("This account number is already managed.");
+        }
+        String branchName = branchRepository.findById(match.getBranchId())
                 .map(branch -> branch.getName())
                 .filter(name -> name != null && !name.isBlank())
                 .orElse(null);

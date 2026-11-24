@@ -25,8 +25,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 10X FI catalogue and bill fetch. Payment, QuickPay, status polling, and complaints stay out
- * until a later pass. Only categories that publish a bill are listed.
+ * 10X FI catalogue, bill fetch, and payment of a fetched bill. QuickPay, status polling, and
+ * complaints stay out. Only categories that publish a bill are listed.
  */
 @Component
 @ConditionalOnProperty(name = "app.billing.provider", havingValue = "branchx")
@@ -138,6 +138,35 @@ public class BranchXBbpsProvider implements BbpsProvider, BillingProvider {
     @Override
     public PaymentResult pay(String idempotencyKey, String billServiceCode, String customerBillAccountNumber, BigDecimal amount) {
         throw new UnsupportedOperationException("10X bill payment is not wired yet");
+    }
+
+    @Override
+    public WalletBalance walletBalance() {
+        try {
+            ExchangeResult result = exchange(HttpMethod.POST, "/service/get_balance", Map.of(), null);
+            if (result.body() == null || result.body().isBlank()) {
+                return BranchXMapper.walletBalance(null);
+            }
+            return BranchXMapper.walletBalance(json.readTree(result.body()));
+        } catch (BillFetchFailedException ex) {
+            return BranchXMapper.walletBalance(null);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            return BranchXMapper.walletBalance(null);
+        }
+    }
+
+    @Override
+    public SettlementResult settleFetchedBill(FetchedBillSettlement settlement) {
+        ObjectNode payload = BranchXMapper.paymentRequest(json, settlement);
+        HttpBillFetch http = postRaw("/BillPayment/transaction", payload);
+        if (http.body() == null || http.body().isBlank()) {
+            return new SettlementResult(false, "Bill provider returned an empty response", null, null);
+        }
+        try {
+            return BranchXMapper.paymentResult(http.statusCode(), json.readTree(http.body()));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            return new SettlementResult(false, "Bill provider returned a response that could not be read", null, null);
+        }
     }
 
     private JsonNode get(String path, Map<String, String> query) {

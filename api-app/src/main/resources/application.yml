@@ -75,7 +75,7 @@ app:
       connect-timeout-ms: ${BRANCHX_CONNECT_TIMEOUT_MS:5000}
       read-timeout-ms: ${BRANCHX_READ_TIMEOUT_MS:25000}
     auto-fetch:
-      enabled: ${BILLING_AUTO_FETCH_ENABLED:true}
+      enabled: ${BILLING_AUTO_FETCH_ENABLED:false}
     worker:
       poll-interval-ms: ${BILLING_WORKER_POLL_MS:5000}
 

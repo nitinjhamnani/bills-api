@@ -36,7 +36,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -114,19 +116,46 @@ public class CommissionController {
 
     @PostMapping
     @PreAuthorize("hasRole('ORGANISATION_ADMIN')")
-    public CommissionDto create(@Valid @RequestBody CreateRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
+    public CreateManyResult create(@Valid @RequestBody CreateRequest request, @AuthenticationPrincipal AuthenticatedUser principal) {
         String effectiveCategory = (request.categoryId() == null || request.categoryId().isBlank())
                 ? "Electricity"
                 : request.categoryId().trim();
         BbpsCategory category = requireEnabled(effectiveCategory);
-        BbpsProvider.ProviderBiller operator = lookupService.billers(category.categoryId()).stream()
-                .filter(biller -> biller.billerId().equals(request.operatorId()))
-                .findFirst()
-                .orElseThrow(() -> new ResourceNotFoundException("Operator not found for this category"));
-        Commission saved = commissionService.create(new CommissionService.NewCommission(
-                category.id(), operator.billerId(), operator.name(), request.vendorId(),
-                request.minRange(), request.maxRange(), request.commission()), actor(principal));
-        return toDtos(List.of(saved)).get(0);
+        List<String> operatorIds = request.operatorIds() == null
+                ? List.of()
+                : request.operatorIds().stream()
+                        .filter(id -> id != null && !id.isBlank())
+                        .map(String::trim)
+                        .collect(Collectors.toCollection(LinkedHashSet::new))
+                        .stream()
+                        .toList();
+        if (operatorIds.isEmpty()) {
+            throw new BadRequestException("Select at least one operator");
+        }
+        Map<String, BbpsProvider.ProviderBiller> operators = lookupService.billers(category.categoryId()).stream()
+                .collect(Collectors.toMap(BbpsProvider.ProviderBiller::billerId, Function.identity(), (left, right) -> left));
+        List<Commission> created = new ArrayList<>();
+        List<SkippedOperator> skipped = new ArrayList<>();
+        CommissionService.Actor actor = actor(principal);
+        for (String operatorId : operatorIds) {
+            BbpsProvider.ProviderBiller operator = operators.get(operatorId);
+            if (operator == null) {
+                skipped.add(new SkippedOperator(operatorId, operatorId, "Operator not found for this category"));
+                continue;
+            }
+            try {
+                created.add(commissionService.create(new CommissionService.NewCommission(
+                        category.id(), operator.billerId(), operator.name(), request.vendorId(),
+                        request.minRange(), request.maxRange(), request.commission()), actor));
+            } catch (BadRequestException ex) {
+                if (ex.getMessage() != null && ex.getMessage().contains("already has a commission")) {
+                    skipped.add(new SkippedOperator(operator.billerId(), operator.name(), ex.getMessage()));
+                } else {
+                    throw ex;
+                }
+            }
+        }
+        return new CreateManyResult(toDtos(created), skipped);
     }
 
     @PutMapping("/{id}")
@@ -221,11 +250,17 @@ public class CommissionController {
 
     public record CreateRequest(
             String categoryId,
-            @NotBlank String operatorId,
+            List<String> operatorIds,
             @NotBlank String vendorId,
             @NotNull @DecimalMin("0") BigDecimal minRange,
             BigDecimal maxRange,
             @NotNull @DecimalMin("0.001") @DecimalMax("100") BigDecimal commission) {
+    }
+
+    public record SkippedOperator(String operatorId, String operatorName, String message) {
+    }
+
+    public record CreateManyResult(List<CommissionDto> created, List<SkippedOperator> skipped) {
     }
 
     public record UpdateRequest(

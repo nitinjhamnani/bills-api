@@ -26,6 +26,28 @@ public interface BillingProvider {
 
     PaymentResult pay(String idempotencyKey, String billServiceCode, String customerBillAccountNumber, BigDecimal amount);
 
+    /**
+     * Pays a bill that was already fetched. {@code billFetchBase64} is sent unchanged.
+     * {@code userName} may be null. A failed provider call returns {@code success=false} and does not throw.
+     */
+    SettlementResult settleFetchedBill(FetchedBillSettlement settlement);
+
+    /**
+     * The provider wallet that Direct Pay debits. {@code readable} is true only when the provider
+     * reports SUCCESS and a numeric balance. The message already includes the provider status code.
+     */
+    WalletBalance walletBalance();
+
+    record WalletBalance(boolean readable, BigDecimal balance, String status, String statusCode, String message) {
+    }
+
+    record FetchedBillSettlement(
+            BigDecimal amount, String userMobileNumber, String userName, String billFetchBase64) {
+    }
+
+    record SettlementResult(boolean success, String message, String reference, String data) {
+    }
+
     /** Mirrors the shape of a real BBPS Bill Fetch response (customer/bill identification + amount + dates). */
     record FetchedBill(
             String customerName,

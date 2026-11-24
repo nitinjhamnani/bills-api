@@ -25,11 +25,9 @@ public interface BillRepository extends JpaRepository<Bill, String> {
 
     @Query("""
             select b from Bill b
-            where b.sourceId = :sourceId
-              and lower(trim(b.primaryParamValue)) = lower(trim(:primaryParamValue))
+            where lower(trim(b.primaryParamValue)) = lower(trim(:primaryParamValue))
             """)
-    List<Bill> findByClientAndPrimaryParamValue(@Param("sourceId") String sourceId,
-                                                 @Param("primaryParamValue") String primaryParamValue);
+    List<Bill> findByPrimaryParamValue(@Param("primaryParamValue") String primaryParamValue);
 
     @Query("select count(b) from Bill b where b.latestFetch.fetchStatus = :status")
     long countByFetchStatus(@Param("status") BillFetch.FetchStatus status);

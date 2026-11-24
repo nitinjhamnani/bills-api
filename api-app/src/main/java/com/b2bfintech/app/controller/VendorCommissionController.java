@@ -117,7 +117,8 @@ public class VendorCommissionController {
         List<SheetRowNote> errors = new ArrayList<>();
         for (VendorBillSheet.RawRow row : VendorBillSheet.read(file.getInputStream())) {
             VendorPaymentService.SheetDecision decision = vendorPaymentService.decide(
-                    vendor.getId(), row.paymentId(), row.status(), row.reference(), selected);
+                    vendor.getId(), row.paymentId(), row.status(),
+                    row.bbpsTransactionId(), row.externalTransactionId(), selected);
             if (decision.error() != null) {
                 errors.add(new SheetRowNote(row.row(), decision.error()));
             } else if ("IN_PROGRESS".equals(decision.action())) {
@@ -141,7 +142,8 @@ public class VendorCommissionController {
         List<BillDtos.BulkRowResult> results = new ArrayList<>();
         for (VendorBillSheet.RawRow row : VendorBillSheet.read(file.getInputStream())) {
             VendorPaymentService.SheetDecision decision = vendorPaymentService.decide(
-                    vendor.getId(), row.paymentId(), row.status(), row.reference(), selected);
+                    vendor.getId(), row.paymentId(), row.status(),
+                    row.bbpsTransactionId(), row.externalTransactionId(), selected);
             if (decision.error() != null) {
                 results.add(new BillDtos.BulkRowResult(row.row(), false, row.paymentId(), decision.error()));
                 continue;
@@ -150,7 +152,14 @@ public class VendorCommissionController {
                 continue;
             }
             try {
-                vendorPaymentService.markInProgress(vendor.getId(), UUID.fromString(row.paymentId().trim()), principal.phoneNumber());
+                if ("PAID".equals(decision.action())) {
+                    vendorPaymentService.markPaid(
+                            vendor.getId(), UUID.fromString(row.paymentId().trim()),
+                            row.externalTransactionId(), row.bbpsTransactionId(), null, principal.phoneNumber());
+                } else {
+                    vendorPaymentService.markInProgress(
+                            vendor.getId(), UUID.fromString(row.paymentId().trim()), principal.phoneNumber());
+                }
                 results.add(new BillDtos.BulkRowResult(row.row(), true, row.paymentId(), null));
             } catch (RuntimeException ex) {
                 results.add(new BillDtos.BulkRowResult(row.row(), false, row.paymentId(), ex.getMessage()));

@@ -26,7 +26,8 @@ import java.util.List;
 final class VendorBillSheet {
 
     static final String[] HEADERS = {
-            "Payment id", "Consumer number", "Biller", "Amount", "Current stage", "New status", "Reference"
+            "Payment id", "Consumer number", "Biller", "Amount", "Current stage", "New status",
+            "BBPS Transaction ID", "External Transaction ID"
     };
 
     private VendorBillSheet() {
@@ -56,6 +57,7 @@ final class VendorBillSheet {
                 row.createCell(4).setCellValue(stageLabel(bill.vendorStage()));
                 row.createCell(5).setCellValue("Unchanged");
                 row.createCell(6).setCellValue("");
+                row.createCell(7).setCellValue("");
             }
             Sheet lists = workbook.createSheet("Lists");
             lists.createRow(0).createCell(0).setCellValue("Unchanged");
@@ -91,7 +93,8 @@ final class VendorBillSheet {
                         r + 1,
                         paymentId,
                         formatter.formatCellValue(row.getCell(5)).trim(),
-                        formatter.formatCellValue(row.getCell(6)).trim()));
+                        formatter.formatCellValue(row.getCell(6)).trim(),
+                        formatter.formatCellValue(row.getCell(7)).trim()));
             }
             return rows;
         } catch (Exception ex) {
@@ -106,6 +109,6 @@ final class VendorBillSheet {
         return stage;
     }
 
-    record RawRow(int row, String paymentId, String status, String reference) {
+    record RawRow(int row, String paymentId, String status, String bbpsTransactionId, String externalTransactionId) {
     }
 }

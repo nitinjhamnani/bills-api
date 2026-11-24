@@ -162,12 +162,14 @@ public class BillFetchResolutionService {
             fetch.setBillStatus(due ? BillFetch.BillStatus.DUE : BillFetch.BillStatus.PAID);
             fetch.setBillPaymentStatus(due ? BillFetch.PaymentStatus.PENDING : BillFetch.PaymentStatus.PAID);
             fetch.setFetchStatus(BillFetch.FetchStatus.SUCCESS);
-            fetch.setFetchRemarks("Fetched Successfully");
+            fetch.setFetchRemarks(due
+                    ? "Fetched Successfully"
+                    : "The biller reports this period is already paid");
             fetch = billFetchRepository.save(fetch);
             bill.setLatestFetch(fetch);
             billRepository.save(bill);
             activityLogService.log(bill.getId(), null, BillPaymentLog.EventType.FETCH_SUCCESS,
-                    due ? "Fetched - due Rs." + fetched.amount() : "Fetched - already paid", null);
+                    due ? "Fetched - due Rs." + fetched.amount() : "The biller reports this period is already paid", null);
             if (due && bill.isAutoPayEnabled() && bill.getSourceType() == Bill.SourceType.CORP) {
                 ClientPaymentService paymentService = clientPaymentServiceProvider.getIfAvailable();
                 if (paymentService != null) {

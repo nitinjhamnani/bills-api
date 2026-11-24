@@ -105,8 +105,41 @@ public class MakerCheckerPolicy {
         if (canSettleBill(user, payment)) {
             return;
         }
-        if (isSameActor(user, pickedUpBy(payment.getId()))
-                && requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, payment.getAmount())) {
+        throwDenied(user, pickedUpBy(payment.getId()), payment.getAmount());
+    }
+
+    /**
+     * Direct Pay on a pending bill picks it up and settles it as the same person. A checker who
+     * would become the picker cannot also settle a bill that needs approval. This is checked
+     * before the provider is called.
+     */
+    public void assertCanDirectPay(AuthenticatedUser user, BillPayment payment) {
+        if (payment.getOrgStatus() == BillPayment.OrgStatus.PENDING) {
+            String picker = user == null ? null : user.phoneNumber();
+            if (canSettleAsPicker(user, payment.getAmount(), picker)) {
+                return;
+            }
+            throwDenied(user, picker, payment.getAmount());
+        }
+        assertCanSettleBill(user, payment);
+    }
+
+    private boolean canSettleAsPicker(AuthenticatedUser user, BigDecimal amount, String picker) {
+        if (user == null || !MONEY_ROLES.contains(user.role())) {
+            return false;
+        }
+        if (!requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, amount)) {
+            return true;
+        }
+        if ("SUPER_ADMIN".equals(user.role()) || "ORGANISATION_ADMIN".equals(user.role())) {
+            return true;
+        }
+        return "CHECKER".equals(user.role()) && !isSameActor(user, picker);
+    }
+
+    private void throwDenied(AuthenticatedUser user, String picker, BigDecimal amount) {
+        if (isSameActor(user, picker)
+                && requiresApproval(ApprovalRule.ActionType.BILL_PAYMENT, amount)) {
             throw new AccessDeniedException("The person who picked up this bill cannot also settle it");
         }
         throw new AccessDeniedException("A checker must settle this bill because it is at or above the approval threshold");

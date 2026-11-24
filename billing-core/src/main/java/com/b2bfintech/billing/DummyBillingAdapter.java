@@ -165,4 +165,15 @@ public class DummyBillingAdapter implements BillingProvider, BbpsProvider {
                 idempotencyKey, billServiceCode, customerBillAccountNumber, amount);
         return new PaymentResult(true, "DUMMY-BILL-" + idempotencyKey, null);
     }
+
+    @Override
+    public SettlementResult settleFetchedBill(FetchedBillSettlement settlement) {
+        log.info("[DUMMY BILLING] settle amount={}", settlement == null ? null : settlement.amount());
+        return new SettlementResult(true, "Paid", "DUMMY-BILL", null);
+    }
+
+    @Override
+    public WalletBalance walletBalance() {
+        return new WalletBalance(true, new BigDecimal("99999999.00"), "SUCCESS", "61", "Wallet Balance with caping (61)");
+    }
 }

@@ -137,7 +137,8 @@ public class VendorSettlementService {
         BillPayment payment = awaitingCheck(paymentId);
         Bill bill = billRepository.findById(payment.getBillId())
                 .orElseThrow(() -> new ResourceNotFoundException("Bill not found"));
-        String note = "Verified via BBPS API by " + actor.displayName() + " (provider confirmed Rs.0 pending).";
+        String note = "Verified via BBPS API by " + actor.displayName()
+                + " (the biller reports this period is already paid).";
         return completeVerification(payment, bill, actor, note);
     }
 
@@ -184,7 +185,7 @@ public class VendorSettlementService {
         }
         boolean cleared = check.amount() != null && check.amount().signum() <= 0;
         String summary = check.error() != null ? check.error()
-                : cleared ? "The provider shows Rs.0 pending."
+                : cleared ? "The biller reports this period is already paid."
                 : check.amount() != null ? "The provider still shows Rs." + check.amount().toPlainString() + " pending."
                 : "The provider response had no amount.";
         activityLogService.log(payment.getBillId(), payment.getId(),

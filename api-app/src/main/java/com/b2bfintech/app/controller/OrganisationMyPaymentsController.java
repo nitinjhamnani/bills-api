@@ -136,6 +136,20 @@ public class OrganisationMyPaymentsController {
                 categoryLabels.lookup(), principal);
     }
 
+    /** The BranchX wallet Direct Pay would debit. The browser does not call 10X itself. */
+    @GetMapping("/bbps-balance")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER')")
+    public com.b2bfintech.common.spi.BillingProvider.WalletBalance bbpsBalance() {
+        return organisationPaymentService.branchxWallet();
+    }
+
+    /** Pays this Paytrix-held bill through the biller. Vendor bills are refused. */
+    @PostMapping("/{id}/pay-bbps")
+    @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER')")
+    public BillDtos.BillPaymentDto payBbps(@PathVariable java.util.UUID id, @AuthenticationPrincipal AuthenticatedUser principal) {
+        return toDto(organisationPaymentService.payWithBbps(id, principal), categoryLabels.lookup(), principal);
+    }
+
     @PostMapping("/{id}/mark-failed")
     @PreAuthorize("hasAnyRole('ORGANISATION_ADMIN','MAKER','CHECKER')")
     public BillDtos.BillPaymentDto markFailed(@PathVariable java.util.UUID id, @RequestBody MarkFailedRequest request,

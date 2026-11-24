@@ -99,7 +99,7 @@ public class VendorPaymentService {
         return payment;
     }
 
-    /** The vendor paid the biller outside Paytrix. Proof is attached for single-bill settlement and optional in bulk. */
+    /** The vendor paid the biller outside Paytrix. Proof of payment is optional. */
     @Transactional
     public BillPayment markPaid(String vendorClientId, UUID paymentId, String transactionReference,
                                 String bbpsReference, MultipartFile proof, String actor) {
@@ -143,8 +143,8 @@ public class VendorPaymentService {
      * Classifies one spreadsheet row without writing it. {@code action} is IN_PROGRESS, PAID, or null
      * when the row should be left as it is. {@code error} is set when the row cannot be applied.
      */
-    public SheetDecision decide(String vendorClientId, String paymentIdRaw, String statusRaw, String reference,
-                                Set<UUID> selectedIds) {
+    public SheetDecision decide(String vendorClientId, String paymentIdRaw, String statusRaw,
+                                String bbpsTransactionId, String externalTransactionId, Set<UUID> selectedIds) {
         if (paymentIdRaw == null || paymentIdRaw.isBlank()) {
             return new SheetDecision(null, "Payment id is missing");
         }
@@ -177,7 +177,20 @@ public class VendorPaymentService {
             return new SheetDecision("IN_PROGRESS", null);
         }
         if (status.equals("paid")) {
-            return new SheetDecision(null, "Mark this bill paid from the screen so you can attach the proof");
+            if (stage != BillPayment.VendorStage.IN_PROGRESS) {
+                return new SheetDecision(null, stage == BillPayment.VendorStage.ASSIGNED
+                        ? "Mark this bill in progress before you mark it paid"
+                        : "This bill has already moved on");
+            }
+            String externalError = referenceError(externalTransactionId, "Enter the external transaction ID");
+            if (externalError != null) {
+                return new SheetDecision(null, externalError);
+            }
+            String bbpsError = referenceError(bbpsTransactionId, "Enter the BBPS transaction ID");
+            if (bbpsError != null) {
+                return new SheetDecision(null, bbpsError);
+            }
+            return new SheetDecision("PAID", null);
         }
         return new SheetDecision(null, "New status must be In progress");
     }
@@ -255,6 +268,16 @@ public class VendorPaymentService {
 
     private static BillPayment.VendorStage stage(BillPayment payment) {
         return payment.getVendorStage() == null ? BillPayment.VendorStage.ASSIGNED : payment.getVendorStage();
+    }
+
+    private static String referenceError(String reference, String missingMessage) {
+        if (reference == null || reference.isBlank()) {
+            return missingMessage;
+        }
+        if (reference.trim().length() > 120) {
+            return "A reference must be 120 characters or less";
+        }
+        return null;
     }
 
     private static String requireReference(String reference, String missingMessage) {
