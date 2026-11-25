@@ -76,6 +76,13 @@ app:
       read-timeout-ms: ${BRANCHX_READ_TIMEOUT_MS:25000}
     auto-fetch:
       enabled: ${BILLING_AUTO_FETCH_ENABLED:false}
+    # Plain QuickPay listings. The Fetch and Pay operator for the same biller stays available.
+    excluded-operator-ids:
+      - ATPOST000NAT01
+      - JIO000000NAT01
+      - VODA00000NATVA
+      - ATBROAD00NAT01
+      - ATLLI0000NAT01
     worker:
       poll-interval-ms: ${BILLING_WORKER_POLL_MS:5000}
 

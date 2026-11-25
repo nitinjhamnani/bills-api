@@ -1,5 +1,6 @@
 package com.b2bfintech.app.controller;
 
+import com.b2bfintech.app.config.BillingCatalogProperties;
 import com.b2bfintech.app.service.BbpsLookupService;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.exception.ResourceNotFoundException;
@@ -34,18 +35,21 @@ public class OrganisationCategoryController {
     private final CategoryEnablementService enablementService;
     private final BbpsLookupService lookupService;
     private final CatalogCache catalogCache;
+    private final BillingCatalogProperties catalogProperties;
 
     public OrganisationCategoryController(
             BbpsCategoryRepository categoryRepository,
             CategoryOperatorRepository operatorRepository,
             CategoryEnablementService enablementService,
             BbpsLookupService lookupService,
-            CatalogCache catalogCache) {
+            CatalogCache catalogCache,
+            BillingCatalogProperties catalogProperties) {
         this.categoryRepository = categoryRepository;
         this.operatorRepository = operatorRepository;
         this.enablementService = enablementService;
         this.lookupService = lookupService;
         this.catalogCache = catalogCache;
+        this.catalogProperties = catalogProperties;
     }
 
     @GetMapping
@@ -76,6 +80,7 @@ public class OrganisationCategoryController {
             lookupService.billers(category.categoryId());
         }
         return operatorRepository.findAllByCategory(category.id()).stream()
+                .filter(op -> !catalogProperties.excludes(op.operatorId()))
                 .map(op -> new OperatorSettingDto(
                         op.operatorId(),
                         op.operatorName(),
@@ -91,6 +96,9 @@ public class OrganisationCategoryController {
                                           @PathVariable String operatorId,
                                           @RequestBody EnabledRequest request,
                                           @AuthenticationPrincipal AuthenticatedUser principal) {
+        if (catalogProperties.excludes(operatorId)) {
+            throw new BadRequestException("Unknown operator: " + operatorId);
+        }
         BbpsCategory category = resolveCategory(categoryId);
         if (!operatorRepository.existsByCategoryId(category.id())) {
             lookupService.billers(category.categoryId());

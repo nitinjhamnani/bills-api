@@ -1,5 +1,6 @@
 package com.b2bfintech.app.service;
 
+import com.b2bfintech.app.config.BillingCatalogProperties;
 import com.b2bfintech.common.exception.BadRequestException;
 import com.b2bfintech.common.spi.bbps.BbpsProvider;
 import com.b2bfintech.platform.model.BbpsCategory;
@@ -32,6 +33,7 @@ public class BbpsLookupService {
     private final BbpsCategoryRepository categoryRepository;
     private final CategoryOperatorRepository operatorRepository;
     private final CatalogCache catalogCache;
+    private final BillingCatalogProperties catalogProperties;
     private final ObjectMapper objectMapper;
     private final ConcurrentHashMap<String, Object> locks = new ConcurrentHashMap<>();
 
@@ -40,11 +42,13 @@ public class BbpsLookupService {
             BbpsCategoryRepository categoryRepository,
             CategoryOperatorRepository operatorRepository,
             CatalogCache catalogCache,
+            BillingCatalogProperties catalogProperties,
             ObjectMapper objectMapper) {
         this.providers = providers;
         this.categoryRepository = categoryRepository;
         this.operatorRepository = operatorRepository;
         this.catalogCache = catalogCache;
+        this.catalogProperties = catalogProperties;
         this.objectMapper = objectMapper;
     }
 
@@ -60,26 +64,16 @@ public class BbpsLookupService {
             }
             BbpsCategory category = requireCategory(categoryId);
             if (operatorRepository.existsByCategoryId(category.id())) {
-                List<CategoryOperator> stored = operatorRepository.findActiveByCategory(category.id());
-                rememberParameters(stored);
-                List<BbpsProvider.ProviderBiller> operators = stored.stream()
-                        .map(operator -> toBiller(operator, categoryId)).toList();
-                catalogCache.putOperators(categoryId, operators);
-                return operators;
+                return remember(categoryId, offered(operatorRepository.findActiveByCategory(category.id())));
             }
-            List<BbpsProvider.ProviderBiller> fetched = List.copyOf(provider().fetchBillers(categoryId));
+            List<BbpsProvider.ProviderBiller> fetched = offeredBillers(provider().fetchBillers(categoryId));
             if (fetched.isEmpty()) {
                 return fetched;
             }
             try {
                 operatorRepository.insertAll(category.id(), category.providerCode(), fetched);
             } catch (DataIntegrityViolationException ex) {
-                List<CategoryOperator> stored = operatorRepository.findActiveByCategory(category.id());
-                rememberParameters(stored);
-                List<BbpsProvider.ProviderBiller> operators = stored.stream()
-                        .map(operator -> toBiller(operator, categoryId)).toList();
-                catalogCache.putOperators(categoryId, operators);
-                return operators;
+                return remember(categoryId, offered(operatorRepository.findActiveByCategory(category.id())));
             }
             catalogCache.putOperators(categoryId, fetched);
             return fetched;
@@ -87,6 +81,9 @@ public class BbpsLookupService {
     }
 
     public List<BbpsProvider.ProviderBillerParameter> parameters(String categoryId, String billerId) {
+        if (catalogProperties.excludes(billerId)) {
+            throw new BadRequestException("Unknown biller for this category");
+        }
         if (catalogCache.hasParameters(billerId)) {
             return catalogCache.parameters(billerId);
         }
@@ -109,6 +106,27 @@ public class BbpsLookupService {
             catalogCache.putParameters(billerId, fetched);
             return fetched;
         }
+    }
+
+    private List<CategoryOperator> offered(List<CategoryOperator> stored) {
+        return stored.stream()
+                .filter(operator -> !catalogProperties.excludes(operator.operatorId()))
+                .toList();
+    }
+
+    private List<BbpsProvider.ProviderBiller> offeredBillers(List<BbpsProvider.ProviderBiller> fetched) {
+        return fetched.stream()
+                .filter(biller -> !catalogProperties.excludes(biller.billerId()))
+                .toList();
+    }
+
+    private List<BbpsProvider.ProviderBiller> remember(String categoryId, List<CategoryOperator> stored) {
+        rememberParameters(stored);
+        List<BbpsProvider.ProviderBiller> operators = stored.stream()
+                .map(operator -> toBiller(operator, categoryId))
+                .toList();
+        catalogCache.putOperators(categoryId, operators);
+        return operators;
     }
 
     private void rememberParameters(List<CategoryOperator> stored) {
