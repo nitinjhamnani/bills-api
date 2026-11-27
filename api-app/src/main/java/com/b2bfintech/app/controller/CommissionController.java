@@ -148,11 +148,11 @@ public class CommissionController {
                         category.id(), operator.billerId(), operator.name(), request.vendorId(),
                         request.minRange(), request.maxRange(), request.commission()), actor));
             } catch (BadRequestException ex) {
-                if (ex.getMessage() != null && ex.getMessage().contains("already has a commission")) {
-                    skipped.add(new SkippedOperator(operator.billerId(), operator.name(), ex.getMessage()));
-                } else {
-                    throw ex;
-                }
+                String message = ex.getMessage();
+                skipped.add(new SkippedOperator(
+                        operator.billerId(),
+                        operator.name(),
+                        message == null || message.isBlank() ? "This rule could not be created" : message));
             }
         }
         return new CreateManyResult(toDtos(created), skipped);
